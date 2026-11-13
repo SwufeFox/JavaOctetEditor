@@ -30,24 +30,33 @@ public final class McpServer implements AutoCloseable {
     private final String version;
     private final Object state = new Object();
     private final Map<String, Pending> pending = new HashMap<>();
-    private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(), runnable -> {
-                Thread thread = new Thread(runnable, "joe-mcp-tools");
-                // A compiler/decompiler which ignores interruption must not keep a stdio process alive.
-                thread.setDaemon(true);
-                return thread;
-            });
+    private final ThreadPoolExecutor worker;
     private boolean started;
     private boolean closed;
     private String legacyVersion;
     private boolean legacyReady;
     private InputStream input;
+    private Thread readerThread;
     private OutputStream output;
     private IOException outputFailure;
 
     public McpServer(ArchiveTools tools, String version) {
+        this(tools, version, 4, 128);
+    }
+
+    McpServer(ArchiveTools tools, String version, int parallelism, int queueCapacity) {
         this.tools = Objects.requireNonNull(tools);
         this.version = Objects.requireNonNull(version);
+        if (parallelism < 1 || queueCapacity < 1) {
+            throw new IllegalArgumentException("Worker and queue capacities must be positive");
+        }
+        worker = new ThreadPoolExecutor(parallelism, parallelism, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity), runnable -> {
+                    Thread thread = new Thread(runnable, "joe-mcp-tools");
+                    // A compiler/decompiler which ignores interruption must not keep stdio alive.
+                    thread.setDaemon(true);
+                    return thread;
+                });
     }
 
     /** Runs once. EOF cancels outstanding work; supplied output remains owned by the caller. */
@@ -61,6 +70,7 @@ public final class McpServer implements AutoCloseable {
             started = true;
             this.input = input;
             this.output = output;
+            readerThread = Thread.currentThread();
         }
         var decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT);
@@ -78,6 +88,10 @@ public final class McpServer implements AutoCloseable {
             }
         } finally {
             close();
+            synchronized (state) {
+                readerThread = null;
+                this.input = null;
+            }
         }
         synchronized (state) {
             if (outputFailure != null) {
@@ -228,22 +242,26 @@ public final class McpServer implements AutoCloseable {
     }
 
     private void notification(String method, JsonObject params) {
+        if (params.has("_meta") && !params.get("_meta").isJsonObject()) {
+            return;
+        }
         if (method.equals("notifications/initialized")) {
             if (legacyVersion != null) {
                 legacyReady = true;
             }
-        } else if (method.equals("notifications/cancelled") && validId(params.get("requestId"))) {
+        } else if (method.equals("notifications/cancelled") && validId(params.get("requestId"))
+                && (!params.has("reason") || isString(params.get("reason")))) {
             synchronized (state) {
                 Pending task = pending.remove(idKey(params.get("requestId")));
                 if (task != null) {
-                    task.future.cancel(true);
+                    task.cancel();
                     worker.remove(task.future);
                 }
             }
         }
     }
 
-    private void submit(JsonElement id, boolean modern, String name, JsonObject arguments) {
+    private void submit(JsonElement id, boolean modern, String name, JsonObject arguments) throws IOException {
         Pending task = new Pending(id.deepCopy(), modern);
         task.future = new FutureTask<>(() -> {
             execute(task, name, arguments);
@@ -254,27 +272,31 @@ public final class McpServer implements AutoCloseable {
                 return;
             }
             pending.put(idKey(id), task);
-            worker.execute(task.future);
+            try {
+                worker.execute(task.future);
+            } catch (RejectedExecutionException e) {
+                pending.remove(idKey(id), task);
+                task.cancel();
+                sendLocked(error(id, -32603, "Tool worker capacity is full; retry after outstanding requests complete", null));
+            }
         }
     }
 
     private void execute(Pending task, String name, JsonObject arguments) {
         JsonObject response;
         try {
-            response = result(task.id, toolResult(tools.call(name, arguments), false), task.modern);
+            response = result(task.id, toolResult(tools.call(name, arguments, () -> task.cancelled), false), task.modern);
         } catch (ToolException e) {
             response = result(task.id, toolResult(e.toJson(), true), task.modern);
         } catch (CancellationException e) {
-            synchronized (state) {
-                pending.remove(idKey(task.id), task);
-            }
-            return;
+            response = result(task.id, toolResult(new ToolException("OPERATION_ABORTED",
+                    "Tool operation aborted: " + ArchiveTools.message(e)).toJson(), true), task.modern);
         } catch (RuntimeException e) {
             response = error(task.id, -32603, "Internal error while executing " + name, null);
         }
         try {
             synchronized (state) {
-                if (!closed && pending.get(idKey(task.id)) == task && !task.future.isCancelled()) {
+                if (!closed && pending.get(idKey(task.id)) == task && !task.cancelled) {
                     pending.remove(idKey(task.id));
                     sendLocked(response);
                 }
@@ -331,7 +353,9 @@ public final class McpServer implements AutoCloseable {
     private static JsonObject envelope(JsonElement id) {
         JsonObject response = new JsonObject();
         response.addProperty("jsonrpc", "2.0");
-        response.add("id", id);
+        if (id != null && !id.isJsonNull()) {
+            response.add("id", id);
+        }
         return response;
     }
 
@@ -386,15 +410,14 @@ public final class McpServer implements AutoCloseable {
             return false;
         }
         try {
-            id.getAsBigDecimal().toBigIntegerExact();
-            return true;
+            return new java.math.BigDecimal(id.getAsString()).stripTrailingZeros().scale() <= 0;
         } catch (NumberFormatException | ArithmeticException e) {
             return false;
         }
     }
 
     private static String idKey(JsonElement id) {
-        return isString(id) ? "s:" + id.getAsString() : "n:" + id.getAsBigDecimal().toBigIntegerExact();
+        return isString(id) ? "s:" + id.getAsString() : "n:" + new java.math.BigDecimal(id.getAsString()).stripTrailingZeros();
     }
 
     private void send(JsonObject response) throws IOException {
@@ -410,7 +433,7 @@ public final class McpServer implements AutoCloseable {
         }
     }
 
-    /** Cancels work without waiting for compiler libraries or acquiring the ArchiveTools monitor. */
+    /** Cancels queued/running work and unblocks the reader without waiting for tool libraries. */
     @Override
     public void close() {
         InputStream stream;
@@ -419,9 +442,12 @@ public final class McpServer implements AutoCloseable {
                 return;
             }
             closed = true;
-            pending.values().forEach(task -> task.future.cancel(true));
+            pending.values().forEach(Pending::cancel);
             pending.clear();
             worker.shutdownNow();
+            if (readerThread != null && readerThread != Thread.currentThread()) {
+                readerThread.interrupt();
+            }
             stream = input;
         }
         if (stream != null) {
@@ -437,10 +463,16 @@ public final class McpServer implements AutoCloseable {
         private final JsonElement id;
         private final boolean modern;
         private FutureTask<Void> future;
+        private volatile boolean cancelled;
 
         private Pending(JsonElement id, boolean modern) {
             this.id = id;
             this.modern = modern;
+        }
+
+        private void cancel() {
+            cancelled = true;
+            future.cancel(true);
         }
     }
 

@@ -8,16 +8,16 @@ JavaOctetEditor is a Java 21 Swing desktop application and headless AI tool for 
 
 `Main.main()` dispatches `--cli`/`--mcp` before desktop initialization, or launches `JavaOctetEditor` on the Swing event dispatch thread (EDT). The editor coordinates its `Jar`, typed settings, events, tasks, and components; desktop components use `JavaOctetEditor.getInstance()`. Shared archive/compiler/decompiler services must work without that singleton.
 
-`ArchiveIO` loads archives, directories, or single classes into `Jar`, separating base `ClassNode` objects from resource bytes. Desktop `InputJarTask` publishes a fully loaded model on EDT. `DecompileService.decompile(archive, name, backend)` selects VineFlower, CFR, or Procyon explicitly. `Compiler.compileSources(sources, classPath)` compiles against supplied bytecode and returns every generated class. Callers stage complete results before mutating their archive. `ArchiveIO.write` stages output before committing it; versioned multi-release classes remain resources at their original paths.
+`ArchiveIO` loads archives, directories, or single classes into `Jar`. Capture `ArchiveSnapshot` on the model's owning thread, then process its independent data off-thread. `ArchiveCompilation.compile(snapshot, sources)` prepares all outputs; `applyTo` checks captured content and cancellation before committing once, preserves retained wrappers, and removes actual obsolete nested types. Desktop and AI source editing share this path. `Compiler.compileSources` isolates explicit archive dependencies and preserves target compatibility; `compileApplicationSources` intentionally exposes runtime libraries for visitor/transformer scripts. `ArchiveIO.write` stages output before committing; versioned multi-release classes remain resources.
 
-`tool/ArchiveTools` owns explicit, independent workspace handles and shared JSON Schemas. `ArchiveWorkspace` enforces revision checks and transactional edits. `McpServer` serves modern discovery/per-request metadata and legacy initialization over UTF-8 newline-delimited JSON-RPC; `ToolApplication` provides the CLI. Keep protocol stdout free of logging.
+`tool/ArchiveTools` owns explicit workspace handles and JSON Schemas, with short registry lifecycle locking and interruptible locks per handle. `ArchiveWorkspace` enforces revisions and shared staged edits. `McpServer` owns a bounded concurrent executor, persistent cancellation tokens, modern per-request metadata, and legacy initialization; `ToolApplication` provides CLI/lifecycle management. Keep protocol stdout free of logging.
 
 ## Key Directories
 
 Java paths below are relative to `src/main/java/cn/enaium/joe/`:
 
 - `gui/`, `dialog/`: Swing panels, menus, tabs, tree components, and dialogs.
-- `jar/`, `util/classes/`, `util/asm/`: archive state, class wrappers, and bytecode helpers.
+- `jar/`, `util/classes/`, `util/asm/`: archive state, owned snapshots, guarded source commits, class wrappers, and bytecode helpers.
 - `util/task/tasks/`: load, export, search, remapping, and transformation operations.
 - `service/decompiler/`, `util/compiler/`: decompiler backends and in-memory source compilation.
 - `util/config/`, `util/event/`: typed settings, generated settings controls, and application events.
@@ -46,17 +46,19 @@ java -jar build/libs/JavaOctetEditor-1.4.9.jar --mcp
 - Match surrounding Java formatting, generally four-space indentation and opening braces on the declaration line. Use PascalCase classes, camelCase members, and operation names ending in `Task` for background tasks; preserve existing license headers.
 - Class-map keys use JVM internal names such as `pkg/Type`. Use `ClassNode.getClassNode()` for mutable ASM access and `getClassBytes()` for serialization; read-only metadata access should retain cached bytes. Archive index views are read-only: use explicit `Jar` put/remove methods. Refresh rejects colliding renames instead of discarding classes.
 - Rebuilding/filtering the current archive's tree must preserve open editor tabs. `JavaOctetEditor.setJar` clears tabs when replacing the archive; `refreshJar` updates the current model and view without discarding the editing context.
-- Implement tracked desktop work as `AbstractTask<T>` and submit through `TaskManager`. Preserve duplicate protection unless a task is `@Repeatable`; cancellation must reach its worker, and executors/timers must close with the editor. Compile all outputs before committing any class changes.
+- Implement desktop work as `AbstractTask<T>` through `TaskManager`. Capture input/configuration before dispatch; publish model changes through EDT success hooks only if work remains authoritative. `LoadRequestState` tracks newer load intent independently of success/failure. `ArchiveChange` guards remap/transform publication. Cancellation must survive a library clearing interrupts; close workers/timers with the editor.
+- Source compilation uses `ArchiveCompilation` rather than duplicated apply loops. Preserve the original Java release and distinguish archive dependencies from intentional application-extension dependencies. New source targets must be unambiguous. Nested-class cleanup follows ownership metadata; `$` alone does not prove a class is nested.
 - Perform Swing mutations on EDT. Future callbacks can execute immediately on their attaching thread; marshal UI work explicitly. Never block EDT with `Future.get()`/`join()`. `ASyncUtil.execute(work, ui)` is the existing background/UI helper; headless tools do not use desktop tasks.
 - Report user-facing failures through `MessageUtil.error(...)`; use tinylog for diagnostics. Check each operation's failure contract: existing helpers may return `null` or `false`, while task futures may complete exceptionally.
 - Represent settings with existing `Config`/`Value` types and register instances before loading. `ConfigManager(Path)` supports headless persistence; preserve recovery files and atomic-save behavior. Pass formatting arguments directly to `LangUtil.i18n(key, args...)`, and update both `lang/en_US.json` and `lang/zh_CN.json` when adding keys.
-- AI mutations require the workspace's current `expectedRevision`; conflicts must leave data unchanged. Do not execute inspected archive code or enable annotation processors. Keep tool input schemas aligned with runtime validation, paginate large results, and export only after successful changes. Default CLI/MCP exports must not overwrite existing files.
+- AI mutations require current `expectedRevision`. Per-handle locking keeps revision checks atomic while independent handles can progress concurrently. Check persistent request/registry/handle cancellation before committing, including export progress callbacks; an unrelated operation abort still needs a response. Default exports must not overwrite files. Keep schemas and validation aligned, paginate results, and reject malformed Unicode text instead of silently replacing bytes.
 
 ## Important Files
 
 - `src/main/java/cn/enaium/joe/Main.java`: executable entry point and tooling initialization.
 - `src/main/java/cn/enaium/joe/JavaOctetEditor.java`: application composition, shared state, configuration registration, and archive refresh.
 - `src/main/java/cn/enaium/joe/jar/Jar.java` and `src/main/java/cn/enaium/joe/util/classes/ClassNode.java`: archive indexing and tree/byte serialization invariants.
+- `src/main/java/cn/enaium/joe/jar/ArchiveSnapshot.java`, `ArchiveCompilation.java`: owned background input and one-shot optimistic source commits shared by desktop/tools.
 - `src/main/java/cn/enaium/joe/tool/ArchiveTools.java`: shared tool catalog/validation; workspace, CLI, and MCP implementations are beside it.
 - `build.gradle`: Java toolchain, full runtime dependency packaging, JUnit configuration, application/agent manifest, and desktop `run` task. Shadow includes runtime dependencies and merges service files; keep the runnable and plain JAR names distinct.
 - `settings.gradle`, `gradle.properties`, `gradle/wrapper/gradle-wrapper.properties`: project name, artifact version, and Gradle distribution. The UI also declares `JavaOctetEditor.VERSION`; keep it aligned when changing releases.
@@ -68,6 +70,6 @@ Use a full JDK 21: source compilation requires `ToolProvider.getSystemJavaCompil
 
 ## Testing & QA
 
-Tests use JUnit Jupiter 5.11.3 via JUnit Platform under `src/test/java/cn/enaium/joe/`, grouped by subsystem with `*Test.java` names. Regression coverage includes archive/model invariants, real dependency/nested-class compilation, all decompiler backends, executable ASM visitors, task lifecycle, settings recovery, events, and real CLI/MCP workflows. Print-only generator tests were removed; assertions must verify consumer-visible behavior.
+Tests use JUnit Jupiter 5.11.3 via JUnit Platform under `src/test/java/cn/enaium/joe/`, grouped by subsystem with `*Test.java` names. Cover consumer-visible invariants: snapshot isolation, conflicting/one-shot commits, legacy target/API compatibility, explicit compiler contexts, archive preservation, task publication/load intent, persistent cancellation, settings recovery, and protocol concurrency. Use deterministic barriers for races and real bytecode/resources; avoid tests coupled to registry monitors or generated wording.
 
 Tests run headlessly. Use focused classes while iterating (for example, `./gradlew test --tests 'cn.enaium.joe.tool.ArchiveToolsTest'`); `./gradlew build` matches CI and verifies packaging. No coverage percentage or lint threshold is configured. Desktop changes also require a runtime smoke check of affected load, browse, edit/recompile, and export behavior. Test protocol streams and process exit behavior when changing headless entry points.

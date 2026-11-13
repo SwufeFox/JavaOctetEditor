@@ -91,9 +91,13 @@ public class FileTree extends JTree {
             return;
         }
         Object lastPathComponent = getSelectionPath().getLastPathComponent();
+        var app = JavaOctetEditor.getInstance();
+        var archive = app.getJar();
         SwingUtilities.invokeLater(() -> {
+            if (!app.isCurrentArchive(archive)) return;
             var tabs = JavaOctetEditor.getInstance().fileTabbedPanel;
             if (lastPathComponent instanceof ClassTreeNode node) {
+                if (archive == null || archive.getClassNode(node.classNode.getInternalName()) != node.classNode) return;
                 for (int i = 0; i < tabs.getTabCount(); i++) {
                     if (tabs.getComponentAt(i) instanceof ClassTabPanel panel && panel.classNode == node.classNode) {
                         tabs.setSelectedIndex(i);

@@ -22,10 +22,10 @@ class VisitorTest {
                 """), Map.of()).get("fixture.Sample");
         StringWriter source = new StringWriter();
         new ClassReader(original).accept(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(source)), 0);
-        StringWriter errors = new StringWriter();
-        byte[] dumpClass = Compiler.compileSingle("asm.fixture.SampleDump", source.toString(), errors);
-        assertNotNull(dumpClass, errors.toString());
-        Class<?> visitor = new MemoryClassLoader(getClass().getClassLoader(), Map.of("asm.fixture.SampleDump", dumpClass))
+        Map<String, byte[]> visitorClasses = Compiler.compileApplicationSources(
+                Map.of("asm.fixture.SampleDump", source.toString()), Map.of());
+        assertTrue(visitorClasses.containsKey("asm.fixture.SampleDump"));
+        Class<?> visitor = new MemoryClassLoader(getClass().getClassLoader(), visitorClasses)
                 .loadClass("asm.fixture.SampleDump");
         byte[] recreated = (byte[]) visitor.getMethod("dump").invoke(null);
         assertEquals("fixture/Sample", new ClassReader(recreated).getClassName());

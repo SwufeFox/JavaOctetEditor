@@ -62,9 +62,7 @@ public final class ToolApplication {
     }
 
     private static int mcp(InputStream input, OutputStream output, PrintStream errors) {
-        // The server owns cancellation. Do not acquire ArchiveTools' synchronized close()
-        // here: an interrupted third-party decompiler may still hold its monitor at EOF.
-        try (McpServer server = new McpServer(new ArchiveTools(), VERSION)) {
+        try (ArchiveTools tools = new ArchiveTools(); McpServer server = new McpServer(tools, VERSION)) {
             server.run(input, output);
             return 0;
         } catch (IOException | RuntimeException e) {

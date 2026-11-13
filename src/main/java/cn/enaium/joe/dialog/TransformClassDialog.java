@@ -72,15 +72,16 @@ public class TransformClassDialog extends Dialog {
                 return;
             }
             String source = codeAreaPanel.getTextArea().getText();
-            var snapshot = archive.copy();
+            var baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(archive);
+            var snapshot = baseline.toJar();
             button.setEnabled(false);
-            var task = app.TASKS.submit(new cn.enaium.joe.util.task.AbstractTask<cn.enaium.joe.jar.Jar>("Transform classes") {
+            var task = app.TASKS.submit(new cn.enaium.joe.util.task.AbstractTask<cn.enaium.joe.util.task.ArchiveChange>("Transform classes") {
                 @Override
-                public cn.enaium.joe.jar.Jar get() {
+                public cn.enaium.joe.util.task.ArchiveChange get() {
                     try {
                         java.util.Map<String, byte[]> classPath = new java.util.LinkedHashMap<>();
                         for (ClassNode node : snapshot.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
-                        var outputs = Compiler.compileSources(java.util.Map.of(className, source), classPath);
+                        var outputs = Compiler.compileApplicationSources(java.util.Map.of(className, source), classPath);
                         ASMClassLoader loader = new ASMClassLoader();
                         Class<?> type = loader.defineClass(className, outputs.get(className));
                         for (var output : outputs.entrySet()) {
@@ -94,7 +95,7 @@ public class TransformClassDialog extends Dialog {
                         }
                         snapshot.refresh();
                         setProgress(100);
-                        return snapshot;
+                        return new cn.enaium.joe.util.task.ArchiveChange(baseline, snapshot);
                     } catch (ReflectiveOperationException | cn.enaium.joe.util.compiler.CompileError failure) {
                         throw new java.util.concurrent.CompletionException(failure);
                     }
@@ -103,10 +104,8 @@ public class TransformClassDialog extends Dialog {
             transformation = task;
             task.whenComplete((staged, failure) -> {
                 button.setEnabled(true);
-                if (failure != null || app.getJar() != archive || !isDisplayable()) return;
-                app.setJar(staged);
-                for (ClassNode node : staged.getClasses()) EditSaveSuccessEvent.trigger(node.getInternalName());
-                MessageUtil.info(LangUtil.i18n("source.saved"));
+                if (failure != null || !app.isCurrentArchive(archive) || !isDisplayable()) return;
+                if (app.applyArchiveChange(archive, staged)) MessageUtil.info(LangUtil.i18n("source.saved"));
             });
         });
     }

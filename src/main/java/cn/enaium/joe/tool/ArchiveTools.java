@@ -5,6 +5,9 @@ import com.google.gson.*;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 /** Shared, discoverable tool catalog used by both MCP and the command line. */
 public final class ArchiveTools implements AutoCloseable {
@@ -26,7 +29,9 @@ public final class ArchiveTools implements AutoCloseable {
     }
 
     private static final Map<String, Definition> DEFINITIONS = definitions();
-    private final Map<String, ArchiveWorkspace> archives = new LinkedHashMap<>();
+    private final Object lifecycle = new Object();
+    private final Map<String, Handle> archives = new HashMap<>();
+    private volatile boolean closed;
 
     public JsonArray listTools() {
         JsonArray tools = new JsonArray();
@@ -38,35 +43,70 @@ public final class ArchiveTools implements AutoCloseable {
         return DEFINITIONS.containsKey(name);
     }
 
-    /** Serializes mutations and their revision checks, including callers outside MCP. */
-    public synchronized JsonObject call(String name, JsonObject arguments) throws ToolException {
+    /** Preserves the direct CLI API while serializing revision checks only within one handle. */
+    public JsonObject call(String name, JsonObject arguments) throws ToolException {
+        return call(name, arguments, () -> false);
+    }
+
+    JsonObject call(String name, JsonObject arguments, BooleanSupplier cancelled) throws ToolException {
+        Objects.requireNonNull(cancelled);
         Definition definition = DEFINITIONS.get(name);
         if (definition == null) {
             throw new ToolException("UNKNOWN_TOOL", "Unknown tool: " + name);
         }
         validate(arguments, definition.schema(), "arguments");
-        if (Thread.currentThread().isInterrupted()) {
-            throw new CancellationException("Tool call cancelled");
-        }
         try {
             if (name.equals("open_archive")) {
+                BooleanSupplier stopped = () -> cancelled.getAsBoolean() || closed;
+                checkCancelled(stopped);
                 ArchiveWorkspace workspace = ArchiveWorkspace.open(arguments.get("path").getAsString());
-                archives.put(workspace.id(), workspace);
+                checkCancelled(stopped);
+                synchronized (lifecycle) {
+                    checkClosed();
+                    archives.put(workspace.id(), new Handle(workspace));
+                }
                 return workspace.info();
             }
             String id = arguments.get("archiveId").getAsString();
-            ArchiveWorkspace workspace = archives.get(id);
-            if (workspace == null) {
+            Handle handle;
+            synchronized (lifecycle) {
+                checkClosed();
+                handle = archives.get(id);
+            }
+            if (handle == null) {
                 throw new ToolException("ARCHIVE_NOT_FOUND", "Unknown or closed archiveId. Call open_archive first.");
             }
+            BooleanSupplier stopped = () -> cancelled.getAsBoolean() || closed || !handle.valid;
             if (name.equals("close_archive")) {
-                archives.remove(id);
+                checkCancelled(stopped);
+                synchronized (lifecycle) {
+                    checkClosed();
+                    if (!archives.remove(id, handle)) {
+                        throw new ToolException("ARCHIVE_NOT_FOUND", "Unknown or closed archiveId. Call open_archive first.");
+                    }
+                    handle.valid = false;
+                }
                 JsonObject result = new JsonObject();
                 result.addProperty("archiveId", id);
                 result.addProperty("closed", true);
                 return result;
             }
-            return workspace.call(name, arguments);
+            // Timed interruptible acquisition also observes registry/handle closure when the
+            // owning library ignores interruption and has not released its workspace yet.
+            while (!handle.lock.tryLock(100, TimeUnit.MILLISECONDS)) {
+                checkCancelled(stopped);
+            }
+            try {
+                checkCancelled(stopped);
+                return handle.workspace.call(name, arguments, stopped);
+            } finally {
+                handle.lock.unlock();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            CancellationException failure = new CancellationException("Tool call cancelled while waiting for its archive");
+            failure.initCause(e);
+            throw failure;
         } catch (IOException e) {
             throw new ToolException("IO_ERROR", message(e));
         } catch (IllegalArgumentException e) {
@@ -74,9 +114,34 @@ public final class ArchiveTools implements AutoCloseable {
         }
     }
 
+    private static void checkCancelled(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("Tool call cancelled");
+        }
+    }
+
+    private void checkClosed() {
+        if (closed) {
+            throw new CancellationException("Tool registry is closed");
+        }
+    }
+
     @Override
-    public synchronized void close() {
-        archives.clear();
+    public void close() {
+        synchronized (lifecycle) {
+            closed = true;
+            archives.clear();
+        }
+    }
+
+    private static final class Handle {
+        private final ArchiveWorkspace workspace;
+        private final ReentrantLock lock = new ReentrantLock();
+        private volatile boolean valid = true;
+
+        private Handle(ArchiveWorkspace workspace) {
+            this.workspace = workspace;
+        }
     }
 
     private static Map<String, Definition> definitions() {

@@ -26,6 +26,21 @@ public abstract class AbstractTask<T> implements Supplier<T> {
     private final String name;
 
     private volatile int progress;
+    private volatile boolean cancelled;
+
+    final void cancel() {
+        cancelled = true;
+    }
+
+    /** Runs on EDT before successful completion is made visible to consumers. */
+    protected void onSuccess(T value) {
+    }
+
+    protected final void checkCancelled() {
+        if (cancelled || Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("Task cancelled");
+        }
+    }
 
     public AbstractTask(String name) {
         this.name = name;
@@ -40,9 +55,7 @@ public abstract class AbstractTask<T> implements Supplier<T> {
     }
 
     public void setProgress(int progress) {
-        if (Thread.currentThread().isInterrupted()) {
-            throw new java.util.concurrent.CancellationException("Task cancelled");
-        }
+        checkCancelled();
         this.progress = Math.max(0, Math.min(100, progress));
     }
 }

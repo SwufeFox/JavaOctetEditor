@@ -126,6 +126,7 @@
   "source.compile": "Compile and apply",
   "source.exportHint": "Apply source changes, then export the archive to keep them.",
   "source.saved": "Changes applied in memory. Export the archive to save them to disk.",
+  "source.stale": "The archive changed while this operation was running. Reopen the class or run the operation again to use the latest changes.",
   "source.loading": "Decompiling class…",
   "source.failed": "Decompilation failed. Check the error details, then reopen the class or choose another decompiler in Config.",
   "search.ready": "Enter search criteria, then choose Search.",

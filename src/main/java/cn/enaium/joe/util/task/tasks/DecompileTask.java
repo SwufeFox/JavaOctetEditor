@@ -32,10 +32,11 @@ public class DecompileTask extends AbstractTask<String> {
     private final ClassNode classNode;
     private final cn.enaium.joe.service.decompiler.IDecompiler decompiler;
 
-    public DecompileTask(ClassNode classNode) {
-        super("Decompile " + classNode.getInternalName());
-        this.classNode = classNode.copy();
-        this.decompiler = DecompileService.getService();
+    public DecompileTask(cn.enaium.joe.jar.ArchiveSnapshot baseline, String internalName) {
+        super("Decompile " + internalName);
+        var archive = baseline.toJar();
+        this.classNode = java.util.Objects.requireNonNull(archive.getClassNode(internalName), "Class not found: " + internalName);
+        this.decompiler = DecompileService.captureService(archive);
     }
 
     @Override

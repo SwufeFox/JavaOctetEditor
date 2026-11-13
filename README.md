@@ -60,6 +60,8 @@ java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli compile_sources @patch.json
 
 Compilation resolves dependencies from the input archive and commits all generated classes together. Failed compilation leaves the archive and output untouched. Changes remain in memory unless `--output` or `export_archive` is used. Existing output files require `--overwrite`. Successful CLI calls return `{"result": ...}` and include `"export"` when an output was requested; errors return `{"error":{"code":...,"message":...}}`.
 
+Archive source compilation uses JDK platform APIs and explicit archive dependencies, without implicitly exposing the editor's libraries. Existing edited classes retain their Java target release; new classes in that batch inherit it. A batch containing only new sources inherits a uniform input archive's release, or the running JDK release for an empty archive. Mixed requested targets, ambiguous new-class targets, preview bytecode, and unsupported releases fail explicitly. The editor's visitor/transformer scripts use a separate application-classpath compiler.
+
 ### MCP stdio
 
 Start the server with:
@@ -68,7 +70,9 @@ Start the server with:
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --mcp
 ```
 
-The server supports [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/discover) discovery and per-request metadata, plus the legacy `initialize` handshake for `2025-11-25` and `2025-06-18`. stdout contains only newline-delimited UTF-8 JSON-RPC messages. Closing stdin stops the server; cancellation interrupts tool work where supported and suppresses cancelled replies.
+The server supports [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/discover) discovery and per-request metadata, plus the legacy `initialize` handshake for `2025-11-25` and `2025-06-18`. stdout contains only newline-delimited UTF-8 JSON-RPC messages. Independent archive handles can execute concurrently; each handle serializes revision checks and mutations. The default executor allows four workers and 128 queued calls; overload receives a protocol error rather than unbounded queuing.
+
+Closing stdin stops the server and invalidates its workspaces. Cancellation uses a persistent request token as well as interruption, and explicitly cancelled requests receive no late reply. Independently aborted operations return `OPERATION_ABORTED`. Mutations check cancellation before applying edits/export commit; completed commits are not rolled back.
 
 Example client configuration (replace the JAR path with the absolute path to your built JAR):
 
@@ -148,9 +152,11 @@ Archive loading accepts JAR/ZIP files, directories, and single class files. Entr
 
 Exports use a temporary sibling file. Replacing an existing output requires atomic filesystem replacement; unsupported filesystems fail with the original preserved. CLI/MCP additionally require explicit overwrite permission. Modified signed archives need to be signed again before signature verification can succeed.
 
+Background desktop operations work on owned archive snapshots, including resource bytes and captured decompiler options. Compilation, visitor edits, remapping, and transforms reject conflicting later edits before publication; exports represent the captured archive rather than a mixture of concurrent changes. A newer load request invalidates older publication even if the newer load fails or is cancelled. Retained class wrappers and unrelated editor tabs remain in place; removed/renamed classes close only their affected views. Source recompilation removes obsolete nested classes using bytecode ownership metadata and preserves unrelated top-level names containing `$`.
+
 Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration.
 
-Tests cover archive round trips and failed-write preservation, mutable bytecode serialization, real classpath compilation, decompiler round trips, task cancellation/lifecycle, settings recovery, events, and CLI/MCP workflows. Run `./gradlew test` or select a class with `--tests`, for example:
+Tests cover archive round trips and failed-write preservation, snapshot isolation and conflicting commits, real dependency/target compatibility, decompiler round trips, task publication/cancellation and load intent, settings recovery, events, and concurrent CLI/MCP workflows. Run `./gradlew test` or select a class with `--tests`, for example:
 
 ```sh
 ./gradlew test --tests 'cn.enaium.joe.tool.ArchiveToolsTest'

@@ -225,6 +225,66 @@ class TaskManagerTest {
         }
     }
 
+    @Test
+    void cancellationAfterWorkerFinishesSuppressesQueuedPublication() throws Exception {
+        AtomicBoolean published = new AtomicBoolean();
+        try (TaskManager manager = new TaskManager(new InlineExecutor(), failure -> fail(failure))) {
+            SwingUtilities.invokeAndWait(() -> {
+                var result = manager.submit(new AbstractTask<Integer>("Queued publication") {
+                    @Override public Integer get() { return 42; }
+                    @Override protected void onSuccess(Integer value) { published.set(true); }
+                });
+                assertFalse(result.isDone());
+                assertTrue(result.cancel(true));
+                assertTrue(result.isCancelled());
+            });
+            SwingUtilities.invokeAndWait(() -> {});
+            assertFalse(published.get());
+        }
+    }
+
+    @Test
+    void closeSuppressesAlreadyQueuedPublication() throws Exception {
+        AtomicBoolean published = new AtomicBoolean();
+        TaskManager manager = new TaskManager(new InlineExecutor(), failure -> fail(failure));
+        java.util.concurrent.atomic.AtomicReference<CompletableFuture<Integer>> submitted = new java.util.concurrent.atomic.AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            submitted.set(manager.submit(new AbstractTask<Integer>("Queued publication") {
+                @Override public Integer get() { return 42; }
+                @Override protected void onSuccess(Integer value) { published.set(true); }
+            }));
+            manager.close();
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+        assertTrue(submitted.get().isCancelled());
+        assertFalse(published.get());
+    }
+
+    @Test
+    void cancellationSurvivesLibraryClearingInterrupt() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch exited = new CountDownLatch(1);
+        AtomicBoolean passedCancellationCheck = new AtomicBoolean();
+        try (TaskManager manager = new TaskManager(Executors.newSingleThreadExecutor(), failure -> fail(failure))) {
+            var result = manager.submit(new AbstractTask<Integer>("Cleared interrupt") {
+                @Override public Integer get() {
+                    started.countDown();
+                    try {
+                        try { new CountDownLatch(1).await(); }
+                        catch (InterruptedException ignored) { }
+                        setProgress(100);
+                        passedCancellationCheck.set(true);
+                        return 42;
+                    } finally { exited.countDown(); }
+                }
+            });
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            result.cancel(true);
+            assertTrue(exited.await(5, TimeUnit.SECONDS));
+            assertFalse(passedCancellationCheck.get());
+        }
+    }
+
     private static class ImmediateTask extends AbstractTask<Integer> {
         ImmediateTask() { super("Immediate"); }
         @Override public Integer get() { return 42; }

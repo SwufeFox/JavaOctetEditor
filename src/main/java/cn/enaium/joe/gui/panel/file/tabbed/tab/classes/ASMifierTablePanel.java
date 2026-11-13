@@ -57,18 +57,29 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
                     var app = JavaOctetEditor.getInstance();
                     var archive = app.getJar();
                     if (archive == null || archive.getClassNode(classNode.getInternalName()) != classNode) return;
+                    var baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(archive);
+                    int request = ++generation;
                     String className = "ASMifier" + Integer.toHexString(classNode.getInternalName().hashCode()) + Integer.toHexString(getTextArea().getText().hashCode());
                     String source = "import org.objectweb.asm.*; public class " + className + " implements Opcodes {"
                             + "public static byte[] dump() throws Exception {" + getTextArea().getText()
                             + "return classWriter.toByteArray();}}";
                     Map<String, byte[]> classPath = new LinkedHashMap<>();
-                    for (ClassNode node : archive.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
+                    for (ClassNode node : baseline.toJar().getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
                     getTextArea().setEditable(false);
                     compilation = app.TASKS.submit(new CompileVisitorTask(className, source, classPath));
                     compilation.whenComplete((staged, failure) -> {
+                        if (request != generation || !app.isCurrentArchive(archive) || !isDisplayable()) return;
                         getTextArea().setEditable(true);
-                        if (failure != null || app.getJar() != archive || !isDisplayable()) return;
+                        if (failure != null) return;
+                        if (!baseline.matches(archive)) {
+                            MessageUtil.warning(LangUtil.i18n("source.stale"));
+                            return;
+                        }
                         String oldName = classNode.getInternalName();
+                        if (!oldName.equals(staged.getInternalName()) && archive.hasClass(staged.getInternalName())) {
+                            MessageUtil.warning(LangUtil.i18n("class.info.nameInUse", staged.getInternalName()));
+                            return;
+                        }
                         classNode.accept(staged);
                         app.refreshJar();
                         EditSaveSuccessEvent.trigger(oldName);
@@ -101,6 +112,8 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
 
     public void update(){
         int request = ++generation;
+        if (compilation != null && !compilation.isDone()) compilation.cancel(true);
+        codeAreaPanel.getTextArea().setEditable(false);
         ClassNode snapshot = getClassNode().copy();
         StringWriter stringWriter = new StringWriter();
 
@@ -108,6 +121,11 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
             snapshot.trace(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter)));
         }, () -> {
             if (request != generation) return;
+            if (!Arrays.equals(snapshot.getClassBytes(), getClassNode().getClassBytes())) {
+                codeAreaPanel.getTextArea().setText(LangUtil.i18n("source.stale"));
+                return;
+            }
+            codeAreaPanel.getTextArea().setEditable(true);
             String trim = getMiddle(getMiddle(stringWriter.toString())).trim();
             codeAreaPanel.getTextArea().setText(trim.substring(0, trim.lastIndexOf("\n")));
             codeAreaPanel.getTextArea().setCaretPosition(0);

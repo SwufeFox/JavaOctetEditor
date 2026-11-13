@@ -34,7 +34,7 @@ public class TaskManager implements AutoCloseable {
     private final ExecutorService executorService;
     private final Consumer<Throwable> errorHandler;
     private final List<Entry<?>> tasks = new ArrayList<>();
-    private boolean closed;
+    private volatile boolean closed;
 
     public TaskManager() {
         this(Executors.newCachedThreadPool(runnable -> {
@@ -85,7 +85,7 @@ public class TaskManager implements AutoCloseable {
         synchronized (this) {
             snapshot = List.copyOf(tasks);
         }
-        for (Entry<?> entry : snapshot) entry.worker.cancel(true);
+        for (Entry<?> entry : snapshot) entry.cancel(true);
     }
 
     @Override
@@ -103,8 +103,8 @@ public class TaskManager implements AutoCloseable {
         private final CompletableFuture<T> result = new CompletableFuture<>() {
             @Override
             public boolean cancel(boolean mayInterruptIfRunning) {
-                if (SwingUtilities.isEventDispatchThread()) return worker.cancel(mayInterruptIfRunning);
-                FutureTask<Boolean> request = new FutureTask<>(() -> worker.cancel(mayInterruptIfRunning));
+                if (SwingUtilities.isEventDispatchThread()) return Entry.this.cancel(mayInterruptIfRunning);
+                FutureTask<Boolean> request = new FutureTask<>(() -> Entry.this.cancel(mayInterruptIfRunning));
                 SwingUtilities.invokeLater(request);
                 boolean interrupted = false;
                 try {
@@ -162,13 +162,34 @@ public class TaskManager implements AutoCloseable {
             };
         }
 
+        private boolean cancel(boolean mayInterruptIfRunning) {
+            if (result.isDone()) return false;
+            task.cancel();
+            worker.cancel(mayInterruptIfRunning);
+            finish(null, new CancellationException("Task cancelled"));
+            return true;
+        }
+
         private void finish(T value, Throwable failure) {
             Runnable completion = () -> {
-                if (failure == null) {
+                if (result.isDone()) return;
+                Throwable error = failure;
+                try {
+                    if (error == null) {
+                        synchronized (TaskManager.this) {
+                            if (closed) task.cancel();
+                        }
+                        task.checkCancelled();
+                        task.onSuccess(value);
+                    }
+                } catch (Throwable publicationFailure) {
+                    error = publicationFailure;
+                }
+                if (error == null) {
                     result.complete(value);
                 } else {
-                    result.completeExceptionally(failure);
-                    if (!(failure instanceof CancellationException)) errorHandler.accept(failure);
+                    result.completeExceptionally(error);
+                    if (!(error instanceof CancellationException) && !closed) errorHandler.accept(error);
                 }
             };
             if (failure instanceof CancellationException && SwingUtilities.isEventDispatchThread()) completion.run();

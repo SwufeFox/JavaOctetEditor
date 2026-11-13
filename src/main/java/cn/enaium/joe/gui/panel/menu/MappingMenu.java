@@ -51,7 +51,7 @@ public class MappingMenu extends JMenu {
                     var archive = app.getJar();
                     if (archive != null && show != null) {
                         app.TASKS.submit(new RemappingTask(archive, show, value)).thenAccept(staged -> {
-                            if (app.getJar() == archive) app.setJar(staged);
+                            app.applyArchiveChange(archive, staged);
                         });
                     }
                 });

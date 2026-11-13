@@ -46,8 +46,8 @@ public class SaveAllSourceTask extends AbstractTask<Boolean> {
 
     public SaveAllSourceTask(Jar jar, File out) {
         super("SaveAllSource");
-        this.jar = jar.copy();
-        this.decompiler = DecompileService.getService();
+        this.jar = cn.enaium.joe.jar.ArchiveSnapshot.capture(jar).toJar();
+        this.decompiler = DecompileService.captureService(this.jar);
         this.out = out;
     }
 

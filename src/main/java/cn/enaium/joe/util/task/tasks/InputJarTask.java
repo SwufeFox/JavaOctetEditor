@@ -23,70 +23,47 @@ import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.util.task.AbstractTask;
 import org.tinylog.Logger;
 
-import javax.swing.SwingUtilities;
 import java.io.File;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
 
 /**
  * @author Enaium
  * @since 0.10.0
  */
+@cn.enaium.joe.util.task.Repeatable
 public class InputJarTask extends AbstractTask<Jar> {
     private final File file;
+    private final JavaOctetEditor editor;
+    private final long request;
 
     public InputJarTask(File file) {
         super("InputJar");
         this.file = file;
+        this.editor = JavaOctetEditor.getInstance();
+        this.request = editor.beginArchiveLoad();
     }
 
     @Override
     public Jar get() {
         Logger.info("LOAD:{}", file.getAbsolutePath());
         try {
-            Jar jar = ArchiveIO.read(file.toPath(), this::setProgress);
-            publish(jar);
-            return jar;
+            return ArchiveIO.read(file.toPath(), this::setProgress);
         } catch (IOException exception) {
             throw new UncheckedIOException("Could not input archive: " + file, exception);
         }
     }
 
-    private void publish(Jar jar) throws IOException {
-        Thread worker = Thread.currentThread();
-        Runnable update = () -> {
-            if (worker.isInterrupted()) throw new CancellationException("Archive input interrupted");
-            JavaOctetEditor editor = JavaOctetEditor.getInstance();
-            editor.setJar(jar);
-            var recent = editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue();
-            String path = file.getAbsolutePath();
-            recent.remove(path);
-            recent.add(path);
-            editor.window.setTitle(JavaOctetEditor.TITLE + "-" + file.getName());
-        };
-        if (SwingUtilities.isEventDispatchThread()) {
-            update.run();
-            return;
+    @Override
+    protected void onSuccess(Jar jar) {
+        if (!editor.isArchiveLoadCurrent(request)) {
+            throw new java.util.concurrent.CancellationException("A newer archive load replaced this request");
         }
-        FutureTask<Void> publication = new FutureTask<>(update, null);
-        SwingUtilities.invokeLater(publication);
-        try {
-            publication.get();
-        } catch (InterruptedException exception) {
-            publication.cancel(false);
-            worker.interrupt();
-            InterruptedIOException interrupted = new InterruptedIOException("Archive input interrupted before publication");
-            interrupted.initCause(exception);
-            throw interrupted;
-        } catch (ExecutionException exception) {
-            Throwable cause = exception.getCause();
-            if (cause instanceof RuntimeException failure) throw failure;
-            if (cause instanceof Error failure) throw failure;
-            throw new IOException("Could not publish archive", cause);
-        }
+        editor.setJar(jar);
+        var recent = editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue();
+        String path = file.getAbsolutePath();
+        recent.remove(path);
+        recent.add(path);
+        if (editor.window != null) editor.window.setTitle(JavaOctetEditor.TITLE + "-" + file.getName());
     }
 }

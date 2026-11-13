@@ -57,6 +57,34 @@ public class JavaOctetEditor {
 
     private CenterPanel workspace;
     private boolean closed;
+    private final cn.enaium.joe.util.task.LoadRequestState loadRequests = new cn.enaium.joe.util.task.LoadRequestState();
+
+    public long beginArchiveLoad() {
+        if (!SwingUtilities.isEventDispatchThread()) throw new IllegalStateException("Archive loads must start on EDT");
+        return loadRequests.begin();
+    }
+
+    public boolean isArchiveLoadCurrent(long request) {
+        return loadRequests.isCurrent(request);
+    }
+
+    public boolean isCurrentArchive(Jar archive) {
+        return !closed && jar == archive;
+    }
+
+    public boolean applyArchiveChange(Jar original, cn.enaium.joe.util.task.ArchiveChange change) {
+        if (!SwingUtilities.isEventDispatchThread()) throw new IllegalStateException("Archive changes must apply on EDT");
+        if (!isCurrentArchive(original)) return false;
+        try {
+            var changedClasses = change.applyTo(original);
+            refreshJar();
+            for (String name : changedClasses) cn.enaium.joe.util.event.events.EditSaveSuccessEvent.trigger(name);
+            return true;
+        } catch (java.util.ConcurrentModificationException stale) {
+            MessageUtil.warning(LangUtil.i18n("source.stale"));
+            return false;
+        }
+    }
 
     public FileTabbedPanel fileTabbedPanel;
 
@@ -167,6 +195,7 @@ public class JavaOctetEditor {
             return;
         }
         if (closed) return;
+        loadRequests.invalidate();
         this.jar = jar;
         fileTabbedPanel.removeAll();
         ClassTabPanel.clearPanels();
@@ -182,6 +211,7 @@ public class JavaOctetEditor {
         }
         if (jar == null || closed) return;
         jar.refresh();
+        ClassTabPanel.reconcile(jar, fileTabbedPanel);
         fileTree.refresh(jar);
         bottomPanel.refreshStatus();
     }
@@ -193,6 +223,7 @@ public class JavaOctetEditor {
         }
         if (closed) return;
         closed = true;
+        loadRequests.close();
         TASKS.close();
         ASyncUtil.shutdown();
         bottomPanel.shutdown();

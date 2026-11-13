@@ -34,7 +34,7 @@ public class OutputJarTask extends AbstractTask<Boolean> {
 
     public OutputJarTask(Jar jar, File out) {
         super("OutputJar");
-        this.jar = jar;
+        this.jar = cn.enaium.joe.jar.ArchiveSnapshot.capture(jar).toJar();
         this.out = out;
     }
 

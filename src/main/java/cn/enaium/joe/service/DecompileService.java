@@ -68,11 +68,10 @@ public class DecompileService {
         }
     }
 
-
-    public static IDecompiler getService() {
+    /** Captures desktop options now; the supplied archive must be independent of live edits. */
+    public static IDecompiler captureService(Jar archive) {
         JavaOctetEditor editor = JavaOctetEditor.getInstance();
-        if (editor == null || editor.getJar() == null) throw new IllegalStateException("Open an archive before decompiling");
-        Jar archive = editor.getJar();
+        Objects.requireNonNull(archive, "Archive");
         Service backend = editor.CONFIG.getByClass(ApplicationConfig.class).decompilerMode.getValue();
         IDecompiler decompiler = switch (backend) {
             case VineFlower -> new VineFlowerDecompiler(archive, VineFlowerDecompiler.customProperties.getValue());

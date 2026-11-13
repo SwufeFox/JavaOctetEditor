@@ -77,6 +77,21 @@ public class ClassTabPanel extends JPanel {
         internalName2panel.clear();
     }
 
+    public static void reconcile(cn.enaium.joe.jar.Jar archive, JTabbedPane tabs) {
+        for (int index = tabs.getTabCount() - 1; index >= 0; index--) {
+            if (!(tabs.getComponentAt(index) instanceof ClassTabPanel panel)) continue;
+            if (archive.getClassNode(panel.classNode.getInternalName()) != panel.classNode) {
+                tabs.removeTabAt(index);
+            } else {
+                tabs.setTitleAt(index, panel.classNode.getSimpleName());
+            }
+        }
+        internalName2panel.entrySet().removeIf(entry -> {
+            ClassTabPanel panel = entry.getValue().get();
+            return panel == null || archive.getClassNode(panel.classNode.getInternalName()) != panel.classNode;
+        });
+    }
+
     static {
         JavaOctetEditor.getInstance().EVENTS.register(EditSaveSuccessEvent.class, event -> {
             SwingUtilities.invokeLater(() -> {

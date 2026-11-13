@@ -52,7 +52,7 @@ public class Compiler {
 
     public static byte[] compileSingle(String canonicalName, String text, Writer errorTracer) {
         try {
-            byte[] bytecode = compileSources(Map.of(canonicalName, text), Map.of()).get(canonicalName);
+            byte[] bytecode = compileApplicationSources(Map.of(canonicalName, text), Map.of()).get(canonicalName);
             if (bytecode == null) throw new CompileError("Compilation did not produce the requested class: " + canonicalName);
             return bytecode;
         } catch (CompileError error) {
@@ -66,22 +66,40 @@ public class Compiler {
     }
 
     /**
-     * Compiles all sources together, overlaying the running classpath with supplied bytecode.
+     * Compiles archive sources against platform APIs and only the supplied dependency bytecode.
+     * Existing requested classes must share one target release, which is preserved with {@code --release}.
+     * New classes use that release; when all requested classes are new, the supplied archive must have
+     * one unambiguous release. An empty archive uses the running JDK release. Mixed requested targets,
+     * ambiguous archive targets, preview bytecode and releases unsupported by javac fail explicitly.
+     * Regenerated nested/additional classes must not raise the release of any existing output class.
      * Returns every generated class, including nested and additional top-level classes.
      * Neither the supplied sources nor dependency bytes are modified, even on failure.
      */
     public static Map<String, byte[]> compileSources(Map<String, String> sources,
                                                      Map<String, byte[]> classPath) throws CompileError {
-        return compileSources(sources, classPath, null);
+        return compileSources(sources, classPath, null, false);
+    }
+
+    /**
+     * Compiles editor visitors and transformers against explicit bytecode plus the application runtime
+     * classpath, targeting the running JDK. Explicit dependencies take precedence over runtime classes.
+     * Annotation processing is disabled and every generated class is returned.
+     */
+    public static Map<String, byte[]> compileApplicationSources(Map<String, String> sources,
+                                                                Map<String, byte[]> classPath) throws CompileError {
+        return compileSources(sources, classPath, null, true);
     }
 
     private static Map<String, byte[]> compileSources(Map<String, String> sources,
                                                       Map<String, byte[]> classPath,
-                                                      DiagnosticListener<? super JavaFileObject> listener) throws CompileError {
+                                                      DiagnosticListener<? super JavaFileObject> listener,
+                                                      boolean application) throws CompileError {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             throw new CompileError("Java compilation requires a full JDK. Launch JavaOctetEditor with JDK 21 or newer, not a JRE.");
         }
+        if (sources.isEmpty()) throw new CompileError("No Java sources were supplied.");
+        int release = application ? Runtime.version().feature() : archiveRelease(sources, classPath);
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         DiagnosticListener<JavaFileObject> reporter = diagnostic -> {
             diagnostics.report(diagnostic);
@@ -89,24 +107,84 @@ public class Compiler {
         };
         StringWriter output = new StringWriter();
         try (StandardJavaFileManager standard = compiler.getStandardFileManager(reporter, Locale.ROOT, StandardCharsets.UTF_8)) {
-            addRuntimeClassPath(standard);
+            if (application) addRuntimeClassPath(standard);
+            else standard.setLocationFromPaths(StandardLocation.CLASS_PATH, List.of());
+            standard.setLocationFromPaths(StandardLocation.SOURCE_PATH, List.of());
             try (VirtualFileManager manager = new VirtualFileManager(standard, classPath)) {
-                if (sources.isEmpty()) throw new CompileError("No Java sources were supplied.");
                 List<JavaFileObject> units = new ArrayList<>(sources.size());
                 sources.forEach((name, source) -> units.add(new VirtualJavaFileObject(name, Objects.requireNonNull(source, "Source for " + name))));
                 JavaCompiler.CompilationTask task = compiler.getTask(output, manager, reporter,
-                        List.of("-proc:none"), null, units);
+                        List.of("-proc:none", "--release", Integer.toString(release)), null, units);
                 if (!Boolean.TRUE.equals(task.call())) {
                     throw new CompileError(formatDiagnostics(diagnostics, output.toString()));
                 }
-                return manager.getClasses();
+                Map<String, byte[]> classes = manager.getClasses();
+                if (!application) {
+                    for (String name : classes.keySet()) {
+                        if (classPath.containsKey(name)) {
+                            int previous = classRelease(name, classPath.get(name));
+                            if (previous < release) {
+                                throw new CompileError("Cannot raise existing class target for " + name
+                                        + " from Java " + previous + " to Java " + release
+                                        + ". Compile classes with compatible targets together.");
+                            }
+                        }
+                    }
+                }
+                return classes;
             }
         } catch (CompileError error) {
             throw error;
         } catch (IOException | RuntimeException error) {
             String details = formatDiagnostics(diagnostics, output.toString());
-            throw new CompileError("Java compilation failed: " + error.getMessage() + "\n" + details, error);
+            throw new CompileError("Java compilation failed for " + (application ? "application" : "archive")
+                    + " target Java " + release + " (sources " + sources.keySet() + "): "
+                    + error.getMessage() + "\n" + details, error);
         }
+    }
+
+    private static int archiveRelease(Map<String, String> sources, Map<String, byte[]> classPath) throws CompileError {
+        int release = 0;
+        String first = null;
+        for (String name : sources.keySet()) {
+            if (!classPath.containsKey(name)) continue;
+            int candidate = classRelease(name, classPath.get(name));
+            if (release != 0 && release != candidate) throw mixedTargets(first, release, name, candidate);
+            release = candidate;
+            first = name;
+        }
+        if (release != 0) return release;
+        for (Map.Entry<String, byte[]> entry : classPath.entrySet()) {
+            int candidate = classRelease(entry.getKey(), entry.getValue());
+            if (release != 0 && release != candidate) throw mixedTargets(first, release, entry.getKey(), candidate);
+            release = candidate;
+            first = entry.getKey();
+        }
+        return release == 0 ? Runtime.version().feature() : release;
+    }
+
+    private static CompileError mixedTargets(String first, int release, String name, int candidate) {
+        return new CompileError("Cannot choose a safe archive target for mixed Java releases: " + first
+                + " targets Java " + release + " but " + name + " targets Java " + candidate
+                + ". Compile existing classes of one release together; add new classes with an existing class of the intended release.");
+    }
+
+    private static int classRelease(String name, byte[] bytes) throws CompileError {
+        if (bytes == null || bytes.length < 8 || bytes[0] != (byte) 0xCA || bytes[1] != (byte) 0xFE
+                || bytes[2] != (byte) 0xBA || bytes[3] != (byte) 0xBE) {
+            throw new CompileError("Cannot determine archive target: invalid classfile for " + name + ".");
+        }
+        int minor = ((bytes[4] & 0xFF) << 8) | (bytes[5] & 0xFF);
+        int major = ((bytes[6] & 0xFF) << 8) | (bytes[7] & 0xFF);
+        if (minor == 0xFFFF) {
+            throw new CompileError("Cannot preserve preview classfile target for " + name
+                    + ". Recompile without preview features before editing this archive.");
+        }
+        if (major < 45 || major > Runtime.version().feature() + 44 || (minor != 0 && !(major == 45 && minor == 3))) {
+            throw new CompileError("Unsupported classfile target " + major + "." + minor + " for " + name
+                    + ". Use a JDK that supports this archive's Java release.");
+        }
+        return major - 44;
     }
 
     private static String formatDiagnostics(DiagnosticCollector<JavaFileObject> diagnostics, String output) {
@@ -147,10 +225,11 @@ public class Compiler {
         manager.setLocationFromPaths(StandardLocation.CLASS_PATH, paths);
     }
 
+    /** Compiles collected application-extension sources against supplied and runtime dependencies. */
     public CompileError compile(Map<String, byte[]> classPath) {
         results = Map.of();
         try {
-            results = compileSources(sources, classPath, listener);
+            results = compileSources(sources, classPath, listener, true);
             return null;
         } catch (CompileError error) {
             return error;

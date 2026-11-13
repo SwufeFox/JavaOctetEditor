@@ -172,6 +172,34 @@ class ArchiveToolsTest {
         assertEquals(1, call("archive_info", id).get("revision").getAsLong());
     }
 
+    @Test
+    void malformedUnicodeCannotSilentlyReplaceResourceBytes() throws Exception {
+        String id = open(fixture("unicode-invalid.jar"));
+        String malformed = "prefix" + Character.toString((char) 0xD800) + "suffix";
+        assertFailure("INVALID_ENCODING", () -> call("write_resource", id, "path", "message.txt",
+                "content", malformed, "expectedRevision", 0));
+        assertEquals("original", call("read_resource", id, "path", "message.txt").get("content").getAsString());
+        assertEquals(0, call("archive_info", id).get("revision").getAsLong());
+    }
+
+    @Test
+    void removingAnInnerClassDoesNotDeleteADollarNamedTopLevelClass() throws Exception {
+        Path input = directory.resolve("dollar.jar");
+        var classes = cn.enaium.joe.util.compiler.Compiler.compileSources(Map.of(
+                "Dollar", "public class Dollar { public static class Nested {} }",
+                "Dollar$Independent", "public class Dollar$Independent { public static int value() { return 91; } }"), Map.of());
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(input))) {
+            for (var entry : classes.entrySet()) put(zip, entry.getKey() + ".class", entry.getValue());
+        }
+        String id = open(input);
+        String independentHash = call("inspect_class", id, "name", "Dollar$Independent").get("sha256").getAsString();
+        JsonObject changed = call("compile_sources", id, "sources", Map.of("Dollar", "public class Dollar {}"), "expectedRevision", 0);
+        assertTrue(changed.getAsJsonArray("removedClasses").contains(new JsonPrimitive("Dollar$Nested")));
+        assertFalse(changed.getAsJsonArray("removedClasses").contains(new JsonPrimitive("Dollar$Independent")));
+        assertFailure("CLASS_NOT_FOUND", () -> call("inspect_class", id, "name", "Dollar$Nested"));
+        assertEquals(independentHash, call("inspect_class", id, "name", "Dollar$Independent").get("sha256").getAsString());
+    }
+
     private Path fixture(String filename) throws IOException {
         Path input = directory.resolve(filename);
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(input))) {

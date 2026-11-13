@@ -17,6 +17,8 @@
 package cn.enaium.joe.gui.panel.file.tabbed.tab.classes;
 
 import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.jar.ArchiveSnapshot;
+import cn.enaium.joe.jar.ArchiveCompilation;
 import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.util.KeyStrokeUtil;
 import cn.enaium.joe.util.LangUtil;
@@ -29,8 +31,6 @@ import cn.enaium.joe.util.task.tasks.DecompileTask;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -68,38 +68,49 @@ public class DecompileTabPanel extends ClassNodeTabPanel {
         var archive = app.getJar();
         ClassNode original = getClassNode();
         if (archive == null || archive.getClassNode(original.getInternalName()) != original) return;
-        Map<String, byte[]> classPath = new LinkedHashMap<>();
-        for (ClassNode node : archive.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
+        ArchiveSnapshot baseline = ArchiveSnapshot.capture(archive);
+        int request = ++generation;
+        if (decompilation != null) decompilation.cancel(true);
         save.setEnabled(false);
         codeAreaPanel.getTextArea().setEditable(false);
-        CompletableFuture<Map<String, ClassNode>> submitted = app.TASKS.submit(new CompileSourceTask(original.getCanonicalName(),
-                codeAreaPanel.getTextArea().getText(), classPath));
+        CompletableFuture<ArchiveCompilation> submitted = app.TASKS.submit(new CompileSourceTask(original.getCanonicalName(),
+                codeAreaPanel.getTextArea().getText(), baseline));
         compilation = submitted;
         submitted.whenComplete((staged, failure) -> {
+            if (request != generation || !app.isCurrentArchive(archive) || !isDisplayable()) return;
             save.setEnabled(true);
             codeAreaPanel.getTextArea().setEditable(true);
-            if (failure != null || app.getJar() != archive || !isDisplayable()) return;
-            for (var entry : staged.entrySet()) {
-                ClassNode existing = archive.getClassNode(entry.getKey());
-                if (existing == null) archive.putClassNode(entry.getValue());
-                else existing.accept(entry.getValue());
+            if (failure != null) return;
+            try {
+                ArchiveCompilation.Change change = staged.applyTo(archive, submitted::isCancelled);
+                app.refreshJar();
+                for (String internalName : change.generatedClasses()) EditSaveSuccessEvent.trigger(internalName);
+                MessageUtil.info(LangUtil.i18n("source.saved"));
+            } catch (java.util.ConcurrentModificationException stale) {
+                MessageUtil.warning(LangUtil.i18n("source.stale"));
             }
-            app.refreshJar();
-            for (String internalName : staged.keySet()) EditSaveSuccessEvent.trigger(internalName);
-            MessageUtil.info(LangUtil.i18n("source.saved"));
         });
     }
 
     public void update() {
         int request = ++generation;
+        if (compilation != null && !compilation.isDone()) compilation.cancel(true);
+        var app = JavaOctetEditor.getInstance();
+        var archive = app.getJar();
+        if (archive == null || archive.getClassNode(getClassNode().getInternalName()) != getClassNode()) return;
+        ArchiveSnapshot baseline = ArchiveSnapshot.capture(archive);
         if (decompilation != null && !decompilation.isDone()) decompilation.cancel(true);
         save.setEnabled(false);
         codeAreaPanel.getTextArea().setEditable(false);
         codeAreaPanel.getTextArea().setText(LangUtil.i18n("source.loading"));
-        CompletableFuture<String> submitted = JavaOctetEditor.getInstance().TASKS.submit(new DecompileTask(getClassNode()));
+        CompletableFuture<String> submitted = app.TASKS.submit(new DecompileTask(baseline, getClassNode().getInternalName()));
         decompilation = submitted;
         submitted.whenComplete((source, failure) -> {
-                    if (request != generation) return;
+                    if (request != generation || !app.isCurrentArchive(archive)) return;
+                    if (failure == null && !baseline.matches(archive)) {
+                        codeAreaPanel.getTextArea().setText(LangUtil.i18n("source.stale"));
+                        return;
+                    }
                     String message = failure instanceof java.util.concurrent.CancellationException ? "source.cancelled" : "source.failed";
                     codeAreaPanel.getTextArea().setText(failure == null ? source : LangUtil.i18n(message));
                     codeAreaPanel.getTextArea().setCaretPosition(0);

@@ -26,7 +26,7 @@ public final class CompileVisitorTask extends AbstractTask<ClassNode> {
     @Override
     public ClassNode get() {
         try {
-            var outputs = Compiler.compileSources(Map.of(name, source), classPath);
+            var outputs = Compiler.compileApplicationSources(Map.of(name, source), classPath);
             byte[] generated = outputs.get(name);
             if (generated == null) throw new IllegalStateException("Visitor compiler produced no " + name);
             ASMClassLoader loader = new ASMClassLoader();

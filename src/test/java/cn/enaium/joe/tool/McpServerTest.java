@@ -187,7 +187,7 @@ class McpServerTest {
                 harness.send(invalid);
                 JsonObject error = harness.next();
                 assertError(error, -32600);
-                assertTrue(error.get("id").isJsonNull());
+                assertFalse(error.has("id"), "An unreadable request ID must be omitted from an MCP error");
             }
             harness.send(notification("tools/call", object("name", "open_archive", "arguments", object("path", "missing"))));
             harness.send(notification("unknown/notification", new JsonObject()));
@@ -205,38 +205,163 @@ class McpServerTest {
     }
 
     @Test
-    void readerHandlesCancellationWhileToolRegistryIsBusyAndSuppressesLateResults() throws Exception {
-        Path archive = Files.createDirectory(temporary.resolve("cancelled"));
+    void integerRequestIdsPreserveTheirValueWithoutExpandingScientificNotation() throws Exception {
         try (Harness harness = new Harness()) {
-            synchronized (harness.tools) {
-                harness.send(modern(1, "tools/call", object("name", "open_archive", "arguments", object("path", archive.toString()))));
-                harness.send(modern(2, "ping", new JsonObject()));
-                harness.response(2); // Registration happened even though tool execution cannot acquire its monitor.
-                harness.send(modern(1, "ping", new JsonObject()));
-                assertError(harness.response(1), -32600);
-                harness.send(notification("notifications/cancelled", object("requestId", 1, "reason", "test cancellation")));
-                harness.send(modern(3, "ping", new JsonObject()));
-                harness.response(3);
+            JsonObject request = modern(1, "ping", new JsonObject());
+            request.add("id", ToolJson.parse("1e2147483647"));
+            harness.send(request);
+            JsonObject response = harness.next();
+            assertFalse(response.has("error"), response::toString);
+            assertEquals("1e2147483647", response.get("id").getAsString());
+        }
+    }
+
+    @Test
+    void independentHandlesProgressWhileCancellationSuppressesALateMutation() throws Exception {
+        Path archive = Files.createDirectory(temporary.resolve("cancelled"));
+        Files.writeString(archive.resolve("data.txt"), "original");
+        try (Harness harness = new Harness();
+             ArchiveToolsConcurrencyTest.PausedCancellation paused = new ArchiveToolsConcurrencyTest.PausedCancellation()) {
+            String first = harness.open(archive);
+            String second = harness.open(archive);
+            Future<JsonObject> held = harness.hold(first, paused);
+            paused.awaitEntered();
+            harness.send(modern(1, "tools/call", object("name", "write_resource", "arguments",
+                    object("archiveId", first, "path", "data.txt", "content", "late", "expectedRevision", 0))));
+            assertEquals("original", structured(harness.call(2, "read_resource",
+                    object("archiveId", second, "path", "data.txt"))).get("content").getAsString());
+            JsonObject duplicate = modern(1, "ping", new JsonObject());
+            duplicate.add("id", ToolJson.parse("1.0e0"));
+            harness.send(duplicate);
+            assertError(harness.response(1), -32600);
+            harness.send(notification("notifications/cancelled", object("requestId", 1, "reason", 123)));
+            for (JsonElement malformedId : List.of(JsonNull.INSTANCE, new JsonPrimitive(true),
+                    new JsonPrimitive(1.5), new JsonObject())) {
+                JsonObject params = new JsonObject();
+                params.add("requestId", malformedId);
+                harness.send(notification("notifications/cancelled", params));
             }
-            // A subsequent call is a worker barrier: any earlier cancelled invocation has now exited.
-            assertToolError(harness.call(4, "archive_info", object("archiveId", "absent")), "ARCHIVE_NOT_FOUND");
+            harness.send(notification("notifications/cancelled", object("requestId", 1, "_meta", "invalid")));
+            harness.send(modern(3, "ping", new JsonObject()));
+            harness.response(3);
+            harness.send(modern(1, "ping", new JsonObject()));
+            assertError(harness.response(1), -32600);
+            harness.send(notification("notifications/cancelled", object("requestId", 1, "reason", "stop")));
+            harness.send(modern(4, "ping", new JsonObject()));
+            harness.response(4);
+            paused.release();
+            held.get(3, TimeUnit.SECONDS);
+            assertEquals("original", structured(harness.call(5, "read_resource",
+                    object("archiveId", first, "path", "data.txt"))).get("content").getAsString());
             assertTrue(harness.output.frames.isEmpty(), "A cancelled request must not emit a late response");
         }
     }
 
     @Test
-    void eofCancelsWorkWithoutWaitingOnRegistryAndServerCannotRestart() throws Exception {
+    void queuedCancellationFreesCapacityAndOverflowStillReceivesAReply() throws Exception {
+        Path archive = Files.createDirectory(temporary.resolve("queue"));
+        Files.writeString(archive.resolve("data.txt"), "original");
+        try (Harness harness = new Harness(1, 1);
+             ArchiveToolsConcurrencyTest.PausedCancellation paused = new ArchiveToolsConcurrencyTest.PausedCancellation()) {
+            String first = harness.open(archive);
+            String second = harness.open(archive);
+            Future<JsonObject> held = harness.hold(first, paused);
+            paused.awaitEntered();
+            JsonObject mutation = object("name", "write_resource", "arguments",
+                    object("archiveId", first, "path", "data.txt", "content", "late", "expectedRevision", 0));
+            harness.send(modern(1, "tools/call", mutation.deepCopy()));
+            harness.send(modern(2, "ping", new JsonObject()));
+            harness.response(2);
+            harness.send(modern(3, "tools/call", mutation.deepCopy()));
+            harness.send(modern(4, "ping", new JsonObject()));
+            harness.response(4);
+            harness.send(modern(5, "tools/call", mutation.deepCopy()));
+            assertError(harness.response(5), -32603);
+            harness.send(notification("notifications/cancelled", object("requestId", 3)));
+            harness.send(modern(6, "ping", new JsonObject()));
+            harness.response(6);
+            harness.send(modern(7, "tools/call", object("name", "write_resource", "arguments",
+                    object("archiveId", second, "path", "data.txt", "content", "accepted", "expectedRevision", 0))));
+            harness.send(notification("notifications/cancelled", object("requestId", 1)));
+            assertEquals(1, structured(harness.response(7)).get("revision").getAsLong());
+            paused.release();
+            held.get(3, TimeUnit.SECONDS);
+            assertEquals("original", structured(harness.call(8, "read_resource",
+                    object("archiveId", first, "path", "data.txt"))).get("content").getAsString());
+            assertTrue(harness.output.frames.isEmpty());
+        }
+    }
+
+    @Test
+    void eofCancelsWorkBeforeAWorkspaceBarrierReleasesAndServerCannotRestart() throws Exception {
         Path archive = Files.createDirectory(temporary.resolve("eof"));
+        Files.writeString(archive.resolve("data.txt"), "original");
+        try (Harness harness = new Harness();
+             ArchiveToolsConcurrencyTest.PausedCancellation paused = new ArchiveToolsConcurrencyTest.PausedCancellation()) {
+            String id = harness.open(archive);
+            Future<JsonObject> held = harness.hold(id, paused);
+            paused.awaitEntered();
+            harness.send(modern(1, "tools/call", object("name", "write_resource", "arguments",
+                    object("archiveId", id, "path", "data.txt", "content", "late", "expectedRevision", 0))));
+            harness.send(modern(2, "ping", new JsonObject()));
+            harness.response(2);
+            harness.client.close();
+            harness.finished.get(3, TimeUnit.SECONDS);
+            assertTrue(harness.output.frames.isEmpty());
+            assertThrows(IllegalStateException.class, () -> harness.server.run(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream()));
+            paused.release();
+            held.get(3, TimeUnit.SECONDS);
+            assertEquals("original", harness.tools.call("read_resource",
+                    object("archiveId", id, "path", "data.txt")).get("content").getAsString());
+        }
+    }
+
+    @Test
+    void independentlyAbortedOperationsStillReceiveAnActionableReply() throws Exception {
         try (Harness harness = new Harness()) {
-            synchronized (harness.tools) {
-                harness.send(modern(1, "tools/call", object("name", "open_archive", "arguments", object("path", archive.toString()))));
-                harness.send(modern(2, "ping", new JsonObject()));
-                harness.response(2);
-                harness.client.close();
-                harness.finished.get(2, TimeUnit.SECONDS);
-                assertTrue(harness.output.frames.isEmpty());
-                assertThrows(IllegalStateException.class, () -> harness.server.run(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream()));
+            harness.tools.close();
+            assertToolError(harness.call(1, "archive_info", object("archiveId", "closed-registry")), "OPERATION_ABORTED");
+            harness.send(modern(2, "ping", new JsonObject()));
+            assertEquals("complete", harness.response(2).getAsJsonObject("result").get("resultType").getAsString());
+        }
+    }
+
+    @Test
+    void malformedUtf8ClosesTheTransportWithoutWritingInvalidFrames() throws Exception {
+        for (byte[] bytes : List.of(new byte[]{(byte) 0xc3, 0x28, '\n'}, new byte[]{(byte) 0xc3})) {
+            try (ArchiveTools tools = new ArchiveTools(); McpServer server = new McpServer(tools, "test-version")) {
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                assertThrows(java.nio.charset.CharacterCodingException.class,
+                        () -> server.run(new ByteArrayInputStream(bytes), output));
+                assertEquals(0, output.size());
             }
+        }
+    }
+
+    @Test
+    void workerWriteFailuresUnblockTheReaderAndPreserveTheTransportFailure() throws Exception {
+        ExecutorService runner = Executors.newSingleThreadExecutor();
+        try (ArchiveTools tools = new ArchiveTools(); McpServer server = new McpServer(tools, "test-version");
+             PipedInputStream input = new PipedInputStream(65536);
+             PipedOutputStream client = new PipedOutputStream(input)) {
+            Future<?> finished = runner.submit(() -> {
+                server.run(input, new OutputStream() {
+                    @Override
+                    public void write(int value) throws IOException {
+                        throw new IOException("broken worker transport");
+                    }
+                });
+                return null;
+            });
+            JsonObject request = modern(1, "tools/call", object("name", "archive_info",
+                    "arguments", object("archiveId", "missing")));
+            client.write((request + "\n").getBytes(StandardCharsets.UTF_8));
+            client.flush();
+            ExecutionException failure = assertThrows(ExecutionException.class, () -> finished.get(3, TimeUnit.SECONDS));
+            assertInstanceOf(IOException.class, failure.getCause());
+            assertEquals("broken worker transport", failure.getCause().getMessage());
+        } finally {
+            runner.shutdownNow();
         }
     }
 
@@ -323,7 +448,7 @@ class McpServerTest {
 
     private static final class Harness implements AutoCloseable {
         private final ArchiveTools tools = new ArchiveTools();
-        private final McpServer server = new McpServer(tools, "test-version");
+        private final McpServer server;
         private final FrameOutput output = new FrameOutput();
         private final PipedOutputStream client;
         private final ExecutorService runner = Executors.newSingleThreadExecutor(runnable -> {
@@ -331,15 +456,33 @@ class McpServerTest {
             thread.setDaemon(true);
             return thread;
         });
+        private final ExecutorService operations = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "mcp-test-workspace");
+            thread.setDaemon(true);
+            return thread;
+        });
         private final Future<?> finished;
 
         private Harness() throws IOException {
+            this(4, 128);
+        }
+
+        private Harness(int parallelism, int queueCapacity) throws IOException {
+            server = new McpServer(tools, "test-version", parallelism, queueCapacity);
             PipedInputStream input = new PipedInputStream(65536);
             client = new PipedOutputStream(input);
             finished = runner.submit(() -> {
                 server.run(input, output);
                 return null;
             });
+        }
+
+        private String open(Path archive) throws ToolException {
+            return tools.call("open_archive", object("path", archive.toString())).get("archiveId").getAsString();
+        }
+
+        private Future<JsonObject> hold(String id, ArchiveToolsConcurrencyTest.PausedCancellation paused) {
+            return operations.submit(() -> tools.call("archive_info", object("archiveId", id), paused));
         }
 
         private void raw(String text) throws IOException {
@@ -376,6 +519,7 @@ class McpServerTest {
             } finally {
                 server.close();
                 runner.shutdownNow();
+                operations.shutdownNow();
                 tools.close();
             }
         }

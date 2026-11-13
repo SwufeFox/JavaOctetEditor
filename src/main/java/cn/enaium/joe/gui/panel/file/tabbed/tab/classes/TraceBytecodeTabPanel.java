@@ -49,6 +49,7 @@ public class TraceBytecodeTabPanel extends ClassNodeTabPanel {
             snapshot.trace(new TraceClassVisitor(new PrintWriter(stringWriter)));
         }, () -> {
             if (request != generation) return;
+            if (!java.util.Arrays.equals(snapshot.getClassBytes(), getClassNode().getClassBytes())) return;
             codeAreaPanel.getTextArea().setText(stringWriter.toString());
             codeAreaPanel.getTextArea().setCaretPosition(0);
         });

@@ -5,7 +5,8 @@ import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.service.DecompileService;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.compiler.CompileError;
-import cn.enaium.joe.util.compiler.Compiler;
+import cn.enaium.joe.jar.ArchiveCompilation;
+import cn.enaium.joe.jar.ArchiveSnapshot;
 import com.google.gson.*;
 import org.objectweb.asm.tree.*;
 import org.objectweb.asm.util.Printer;
@@ -23,8 +24,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
-/** A private archive model. All access is serialized by ArchiveTools. */
+/** A private archive model. Calls for one handle are serialized by ArchiveTools. */
 final class ArchiveWorkspace {
     private final String id = UUID.randomUUID().toString();
     private final Path source;
@@ -64,7 +66,7 @@ final class ArchiveWorkspace {
         return result;
     }
 
-    JsonObject call(String tool, JsonObject args) throws IOException, ToolException {
+    JsonObject call(String tool, JsonObject args, BooleanSupplier cancelled) throws IOException, ToolException {
         return switch (tool) {
             case "archive_info" -> info();
             case "list_classes" -> listClasses(args);
@@ -74,10 +76,10 @@ final class ArchiveWorkspace {
             case "disassemble_class" -> disassemble(args);
             case "search_archive" -> search(args);
             case "read_resource" -> readResource(args);
-            case "write_resource" -> writeResource(args);
-            case "delete_entry" -> deleteEntry(args);
-            case "compile_sources" -> compile(args);
-            case "export_archive" -> export(args);
+            case "write_resource" -> writeResource(args, cancelled);
+            case "delete_entry" -> deleteEntry(args, cancelled);
+            case "compile_sources" -> compile(args, cancelled);
+            case "export_archive" -> export(args, cancelled);
             default -> throw new ToolException("UNKNOWN_TOOL", "Unknown tool: " + tool);
         };
     }
@@ -89,20 +91,25 @@ final class ArchiveWorkspace {
         return result;
     }
 
-    private void checkRevision(JsonObject args) throws ToolException {
+    private void checkRevision(JsonObject args, BooleanSupplier cancelled) throws ToolException {
+        checkCancelled(cancelled);
         long expected = args.get("expectedRevision").getAsLong();
         if (expected != revision) {
             JsonObject details = response();
             details.addProperty("expectedRevision", expected);
             throw new ToolException("REVISION_CONFLICT", "Archive changed. Inspect the current revision before retrying the edit.", details);
         }
-        checkCancelled();
     }
 
     private static void checkCancelled() {
         if (Thread.currentThread().isInterrupted()) {
             throw new CancellationException("Tool call cancelled");
         }
+    }
+
+    private static void checkCancelled(BooleanSupplier cancelled) {
+        checkCancelled();
+        if (cancelled.getAsBoolean()) throw new CancellationException("Tool call cancelled");
     }
 
     private List<String> classes() {
@@ -414,17 +421,17 @@ final class ArchiveWorkspace {
         return result;
     }
 
-    private JsonObject writeResource(JsonObject args) throws ToolException {
-        checkRevision(args);
+    private JsonObject writeResource(JsonObject args, BooleanSupplier cancelled) throws ToolException {
+        checkRevision(args, cancelled);
         String path = entryPath(args.get("path").getAsString());
         if (path.endsWith(".class")) {
             throw new ToolException("INVALID_ARGUMENT", "Use compile_sources to change classes; write_resource accepts non-class entries.");
         }
         byte[] bytes = text(args, "encoding", "utf8").equals("base64")
                 ? Base64.getDecoder().decode(args.get("content").getAsString())
-                : args.get("content").getAsString().getBytes(StandardCharsets.UTF_8);
+                : encodeUtf8(args.get("content").getAsString());
         boolean changed = !Arrays.equals(bytes, jar.getResource(path));
-        checkCancelled();
+        checkCancelled(cancelled);
         if (changed) {
             jar.putResource(path, bytes);
             revision++;
@@ -438,9 +445,10 @@ final class ArchiveWorkspace {
         return result;
     }
 
-    private JsonObject deleteEntry(JsonObject args) throws ToolException {
-        checkRevision(args);
+    private JsonObject deleteEntry(JsonObject args, BooleanSupplier cancelled) throws ToolException {
+        checkRevision(args, cancelled);
         String path = entryPath(args.get("path").getAsString());
+        checkCancelled(cancelled);
         if (jar.getResource(path) != null) {
             jar.removeResource(path);
             resourceNames = null;
@@ -457,8 +465,8 @@ final class ArchiveWorkspace {
         return result;
     }
 
-    private JsonObject compile(JsonObject args) throws ToolException {
-        checkRevision(args);
+    private JsonObject compile(JsonObject args, BooleanSupplier cancelled) throws ToolException {
+        checkRevision(args, cancelled);
         Map<String, String> sources = new LinkedHashMap<>();
         for (Map.Entry<String, JsonElement> entry : args.getAsJsonObject("sources").entrySet()) {
             if (entry.getKey().isBlank() || entry.getKey().contains("/")) {
@@ -466,79 +474,58 @@ final class ArchiveWorkspace {
             }
             sources.put(entry.getKey(), entry.getValue().getAsString());
         }
-        Map<String, byte[]> classPath = new HashMap<>();
-        for (ClassNode node : jar.getClasses()) {
-            if (!node.getInternalName().equals("module-info")) {
-                classPath.put(node.getCanonicalName(), node.getClassBytes());
-            }
-        }
-        Map<String, byte[]> compiled;
+        ArchiveCompilation.Change change;
         try {
-            compiled = Compiler.compileSources(sources, classPath);
-        } catch (CompileError e) {
+            ArchiveCompilation staged = ArchiveCompilation.compile(ArchiveSnapshot.capture(jar), sources);
+            change = staged.applyTo(jar, cancelled);
+        } catch (CompileError failure) {
             JsonObject details = response();
-            details.addProperty("diagnostics", ArchiveTools.message(e));
+            details.addProperty("diagnostics", ArchiveTools.message(failure));
             throw new ToolException("COMPILATION_FAILED", "Source did not compile. The archive is unchanged.", details);
+        } catch (ConcurrentModificationException conflict) {
+            throw new ToolException("REVISION_CONFLICT", conflict.getMessage(), response());
         }
-        for (String sourceName : sources.keySet()) {
-            if (!compiled.containsKey(sourceName)) {
-                throw new ToolException("COMPILATION_FAILED", "Source must declare the requested class: " + sourceName);
-            }
-        }
-        Map<String, ClassNode> staged = new TreeMap<>();
-        boolean changed = false;
-        for (Map.Entry<String, byte[]> entry : compiled.entrySet()) {
-            ClassNode node = ClassNode.of(entry.getValue());
-            if (!node.getCanonicalName().equals(entry.getKey())) {
-                throw new ToolException("COMPILATION_FAILED", "Compiler output name mismatch: " + entry.getKey());
-            }
-            staged.put(node.getInternalName(), node);
-            ClassNode old = jar.getClassNode(node.getInternalName());
-            changed |= old == null || !Arrays.equals(old.getClassBytes(), entry.getValue());
-        }
-        List<String> removed = new ArrayList<>();
-        for (String name : classes()) {
-            if (staged.containsKey(name)) {
-                continue;
-            }
-            for (String sourceName : sources.keySet()) {
-                String root = sourceName.replace('.', '/');
-                if (name.equals(root) || name.startsWith(root + "$")) {
-                    removed.add(name);
-                    break;
-                }
-            }
-        }
-        changed |= !removed.isEmpty();
-        checkCancelled();
-        if (changed) {
-            removed.forEach(jar::removeClass);
-            staged.values().forEach(jar::putClassNode);
+        if (change.changed()) {
             revision++;
             classNames = null;
-            staged.keySet().forEach(name -> digests.remove(name + ".class"));
-            removed.forEach(name -> digests.remove(name + ".class"));
+            change.generatedClasses().forEach(name -> digests.remove(name + ".class"));
+            change.removedClasses().forEach(name -> digests.remove(name + ".class"));
         }
         JsonObject result = response();
-        result.addProperty("changed", changed);
-        result.add("generatedClasses", strings(staged.keySet()));
-        result.add("removedClasses", strings(removed));
+        result.addProperty("changed", change.changed());
+        result.add("generatedClasses", strings(change.generatedClasses()));
+        result.add("removedClasses", strings(change.removedClasses()));
         return result;
     }
 
-    private JsonObject export(JsonObject args) throws IOException, ToolException {
-        checkRevision(args);
+    private JsonObject export(JsonObject args, BooleanSupplier cancelled) throws IOException, ToolException {
+        checkRevision(args, cancelled);
         String input = args.get("path").getAsString();
         if (input.isBlank()) {
             throw new ToolException("INVALID_ARGUMENT", "Output path must not be blank");
         }
         Path output = Path.of(input).toAbsolutePath().normalize();
         boolean overwrite = args.has("overwrite") && args.get("overwrite").getAsBoolean();
-        ArchiveIO.write(jar, output, overwrite);
+        ArchiveIO.write(jar, output, overwrite, ignored -> checkCancelled(cancelled));
         lastExport = output;
         JsonObject result = info();
         result.addProperty("outputPath", output.toString());
         return result;
+    }
+
+    private static byte[] encodeUtf8(String text) throws ToolException {
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (Character.isHighSurrogate(character)) {
+                if (index + 1 >= text.length() || !Character.isLowSurrogate(text.charAt(index + 1))) {
+                    throw new ToolException("INVALID_ENCODING", "Resource text contains an unpaired Unicode surrogate. Supply valid Unicode text or base64 bytes.");
+                }
+                index++;
+            } else if (Character.isLowSurrogate(character)) {
+                throw new ToolException("INVALID_ENCODING", "Resource text contains an unpaired Unicode surrogate. Supply valid Unicode text or base64 bytes.");
+            }
+        }
+        return text.getBytes(StandardCharsets.UTF_8);
     }
 
     private static String entryPath(String path) throws ToolException {

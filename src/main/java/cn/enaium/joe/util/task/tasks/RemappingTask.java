@@ -37,7 +37,7 @@ import java.util.*;
  * @since 1.0.0
  */
 @Indeterminate
-public class RemappingTask extends AbstractTask<Jar> {
+public class RemappingTask extends AbstractTask<cn.enaium.joe.util.task.ArchiveChange> {
 
 
     public final Map<String, Set<String>> superHashMap = new HashMap<>();
@@ -45,16 +45,18 @@ public class RemappingTask extends AbstractTask<Jar> {
     private final File mapping;
     private final MappingFormat mappingFormat;
     private final Jar original;
+    private final cn.enaium.joe.jar.ArchiveSnapshot baseline;
 
     public RemappingTask(Jar archive, File mapping, MappingFormat mappingFormat) {
         super("Remapping");
         this.mapping = mapping;
         this.mappingFormat = mappingFormat;
-        this.original = Objects.requireNonNull(archive).copy();
+        this.baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(Objects.requireNonNull(archive));
+        this.original = baseline.toJar();
     }
 
     @Override
-    public Jar get() {
+    public cn.enaium.joe.util.task.ArchiveChange get() {
 
 
         try {
@@ -110,10 +112,14 @@ public class RemappingTask extends AbstractTask<Jar> {
                     }
                 });
                 stringClassNodeEntry.analyzeVisitor(classRemapper);
-                jar.putClassNode(cn.enaium.joe.util.classes.ClassNode.of(classNode));
+                var replacement = cn.enaium.joe.util.classes.ClassNode.of(classNode);
+                if (jar.hasClass(replacement.getInternalName())) {
+                    throw new IllegalArgumentException("Mappings produce duplicate class name: " + replacement.getInternalName());
+                }
+                jar.putClassNode(replacement);
             }
             setProgress(100);
-            return jar;
+            return new cn.enaium.joe.util.task.ArchiveChange(baseline, jar);
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         }
