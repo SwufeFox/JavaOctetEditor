@@ -25,7 +25,7 @@ import java.util.function.Supplier;
 public abstract class AbstractTask<T> implements Supplier<T> {
     private final String name;
 
-    private int progress;
+    private volatile int progress;
 
     public AbstractTask(String name) {
         this.name = name;
@@ -40,6 +40,9 @@ public abstract class AbstractTask<T> implements Supplier<T> {
     }
 
     public void setProgress(int progress) {
-        this.progress = progress;
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("Task cancelled");
+        }
+        this.progress = Math.max(0, Math.min(100, progress));
     }
 }

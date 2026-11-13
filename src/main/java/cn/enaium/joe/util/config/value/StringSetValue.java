@@ -20,7 +20,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
-import java.util.HashSet;
+import java.util.Objects;
+import java.util.TreeSet;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.Set;
 
 /**
@@ -30,13 +32,22 @@ import java.util.Set;
 public final class StringSetValue extends Value<Set<String>>{
     public static final Type TYPE = TypeToken.getParameterized(Set.class, String.class).getType();//<Set<String>>().getType();
     public StringSetValue(String name, Set<String> value, String description) {
-        super(TYPE, name, value, description);
+        super(TYPE, name, new CopyOnWriteArraySet<>(new TreeSet<>(value)), description);
+    }
+
+    @Override
+    public void setValue(Set<String> value) {
+        super.setValue(new CopyOnWriteArraySet<>(new TreeSet<>(Objects.requireNonNull(value))));
     }
 
     @Override
     public void decode(JsonElement jsonElement) {
-        Set<String> strings = new HashSet<>();
+        if (jsonElement == null || !jsonElement.isJsonArray()) {
+            throw new IllegalArgumentException("Expected an array of strings");
+        }
+        Set<String> strings = new TreeSet<>();
         for (JsonElement element : jsonElement.getAsJsonArray()) {
+            requirePrimitive(element, "string");
             strings.add(element.getAsString());
         }
         this.setValue(strings);

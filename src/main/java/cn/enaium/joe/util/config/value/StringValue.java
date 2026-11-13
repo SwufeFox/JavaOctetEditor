@@ -34,7 +34,12 @@ public final class StringValue extends Value<String> {
 
     @Override
     public void decode(JsonElement jsonElement) {
-        this.setValue(jsonElement.getAsString());
+        if (jsonElement != null && jsonElement.isJsonNull()) {
+            this.setValue(null);
+        } else {
+            requirePrimitive(jsonElement, "string");
+            this.setValue(jsonElement.getAsString());
+        }
     }
 
     public static Component createGui(StringValue stringValue){

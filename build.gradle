@@ -12,6 +12,7 @@ version project.version
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 jar {
+    archiveClassifier.set('plain')
     manifest.attributes(
             'Manifest-Version': 1.0,
             'Main-Class': 'cn.enaium.joe.Main',
@@ -26,7 +27,6 @@ jar {
     )
 }
 
-new File(System.getProperty("user.dir"), "run").mkdir()
 
 repositories {
     mavenCentral()
@@ -63,25 +63,27 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    systemProperty 'java.awt.headless', 'true'
 }
 
 shadowJar {
-    dependencies {
-        include(dependency('com.formdev:.*'))
-        include(dependency('com.miglayout:.*'))
-        include(dependency('com.github.weisj:.*'))
-        include(dependency('com.github.bobbylight:RSyntaxTextArea'))
-        include(dependency('org.ow2.asm:.*'))
-        include(dependency('org.benf:cfr'))
-        include(dependency('com.github.mstrobel.procyon:procyon-decompiler'))
-        include(dependency('com.google.code.gson:gson'))
-        include(dependency('org.tinylog:.*'))
-        include(dependency('org.vineflower:vineflower'))
-        include(dependency('net.fabricmc:mapping-io'))
-        include(dependency('zone.rong:imaginebreaker'))
-        include(dependency('com.fifesoft:.*'))
-    }
+    mergeServiceFiles()
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
     archiveClassifier.set('')
 }
 
 build.dependsOn shadowJar
+
+tasks.register('run', JavaExec) {
+    group = 'application'
+    description = 'Launch the desktop editor with the full runtime classpath'
+    mainClass = 'cn.enaium.joe.Main'
+    classpath = sourceSets.main.runtimeClasspath
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    workingDir = layout.projectDirectory.dir('run').asFile
+    doFirst {
+        workingDir.mkdirs()
+    }
+}

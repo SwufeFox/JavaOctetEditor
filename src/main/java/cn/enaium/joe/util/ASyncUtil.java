@@ -23,19 +23,38 @@ import java.util.concurrent.Executors;
 /**
  * @author Enaium
  */
-public class ASyncUtil {
+public final class ASyncUtil {
+    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "joe-background");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    private ASyncUtil() {
+    }
 
     public static void execute(Runnable run) {
         execute(run, null);
     }
 
     public static void execute(Runnable run, Runnable ui) {
-        ExecutorService executorService = Executors.newSingleThreadExecutor();
-        executorService.execute(() -> {
-            run.run();
-            if (ui != null) {
-                SwingUtilities.invokeLater(ui);
+        EXECUTOR.execute(() -> {
+            try {
+                run.run();
+                if (ui != null && !Thread.currentThread().isInterrupted() && !EXECUTOR.isShutdown()) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (!EXECUTOR.isShutdown()) ui.run();
+                    });
+                }
+            } catch (java.util.concurrent.CancellationException ignored) {
+                // Closing the application cancels background work.
+            } catch (Throwable failure) {
+                MessageUtil.error(failure);
             }
         });
+    }
+
+    public static void shutdown() {
+        EXECUTOR.shutdownNow();
     }
 }

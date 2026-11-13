@@ -26,6 +26,7 @@ import cn.enaium.joe.gui.panel.BorderPanel;
 import cn.enaium.joe.gui.panel.BottomPanel;
 import cn.enaium.joe.gui.panel.file.tree.CenterPanel;
 import cn.enaium.joe.gui.panel.file.tabbed.FileTabbedPanel;
+import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ClassTabPanel;
 import cn.enaium.joe.gui.component.FileTree;
 import cn.enaium.joe.gui.panel.menu.*;
 import cn.enaium.joe.jar.Jar;
@@ -52,7 +53,10 @@ public class JavaOctetEditor {
 
     public JFrame window;
 
-    private Jar jar;
+    private volatile Jar jar;
+
+    private CenterPanel workspace;
+    private boolean closed;
 
     public FileTabbedPanel fileTabbedPanel;
 
@@ -78,7 +82,11 @@ public class JavaOctetEditor {
         CONFIG.addByInstance(new ProcyonConfig());
         CONFIG.load();
         TASKS = new TaskManager();
-        Runtime.getRuntime().addShutdownHook(new Thread(CONFIG::save));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            TASKS.close();
+            ASyncUtil.shutdown();
+            CONFIG.save();
+        }, "joe-shutdown"));
 
         Integer value = CONFIG.getByClass(ApplicationConfig.class).scale.getValue();
 
@@ -119,7 +127,7 @@ public class JavaOctetEditor {
         }});
 
         window.setContentPane(new BorderPanel() {{
-            setCenter(new CenterPanel());
+            setCenter(workspace = new CenterPanel());
             setBottom(bottomPanel);
         }});
 
@@ -128,11 +136,20 @@ public class JavaOctetEditor {
         window.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
+                if (window.getDefaultCloseOperation() == WindowConstants.DISPOSE_ON_CLOSE) {
+                    shutdown();
+                    return;
+                }
                 MessageUtil.confirm(LangUtil.i18n("dialog.wantCloseWindow"), LangUtil.i18n("warning"), () -> {
+                    shutdown();
                     window.dispose();
-                    System.exit(0);
                 }, () -> {
                 });
+            }
+
+            @Override
+            public void windowClosed(WindowEvent e) {
+                shutdown();
             }
         });
         window.setSize(Util.screenSize(1000, 600));
@@ -145,13 +162,43 @@ public class JavaOctetEditor {
     }
 
     public void setJar(Jar jar) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> setJar(jar));
+            return;
+        }
+        if (closed) return;
         this.jar = jar;
+        fileTabbedPanel.removeAll();
+        ClassTabPanel.clearPanels();
         fileTree.refresh(jar);
+        if (workspace != null) workspace.refreshWorkspace();
+        bottomPanel.refreshStatus();
     }
 
     public void refreshJar() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::refreshJar);
+            return;
+        }
+        if (jar == null || closed) return;
         jar.refresh();
-        fileTree.refresh(getJar());
+        fileTree.refresh(jar);
+        bottomPanel.refreshStatus();
+    }
+
+    public void shutdown() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::shutdown);
+            return;
+        }
+        if (closed) return;
+        closed = true;
+        TASKS.close();
+        ASyncUtil.shutdown();
+        bottomPanel.shutdown();
+        fileTabbedPanel.removeAll();
+        ClassTabPanel.clearPanels();
+        CONFIG.save();
     }
 
     public static JavaOctetEditor getInstance() {

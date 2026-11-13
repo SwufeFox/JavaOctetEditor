@@ -3,69 +3,79 @@ package cn.enaium.joe.util.compiler.virtual;
 import javax.tools.*;
 import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
+/** Presents dependency bytecode to javac without loading classes or consulting editor state. */
 public class VirtualFileManager extends ForwardingJavaFileManager<StandardJavaFileManager> {
-    private final Map<String, VirtualJavaFileObject> sources;
-    private final MemoryClassLoader classLoader;
+    private final Map<String, VirtualJavaClassObject> dependencies = new LinkedHashMap<>();
+    private final Map<String, VirtualJavaClassObject> outputs = new LinkedHashMap<>();
 
-    public VirtualFileManager(StandardJavaFileManager javaFileManager, Map<String, VirtualJavaFileObject> sources, MemoryClassLoader classLoader){
+    public VirtualFileManager(StandardJavaFileManager javaFileManager, Map<String, byte[]> classPath) {
         super(javaFileManager);
-        this.sources = sources;
-        this.classLoader = classLoader;
+        classPath.forEach((name, bytes) -> dependencies.put(name,
+                new VirtualJavaClassObject(name, Objects.requireNonNull(bytes, "Bytecode for " + name))));
     }
 
     public Map<String, byte[]> getClasses() {
-        return sources.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, v -> v.getValue().getBytecode()));
-    }
-
-
-    @Override
-    public ClassLoader getClassLoader(Location location) {
-        return this.classLoader == null ? super.getClassLoader(location) : this.classLoader;
+        Map<String, byte[]> classes = new LinkedHashMap<>();
+        outputs.forEach((name, file) -> classes.put(name, file.getBytecode()));
+        return Collections.unmodifiableMap(classes);
     }
 
     @Override
-    public JavaFileObject getJavaFileForOutput(JavaFileManager.Location location, String className, JavaFileObject.Kind kind, FileObject sibling) throws IOException {
-        if (JavaFileObject.Kind.CLASS == kind) {
-            VirtualJavaFileObject virtualJavaFileObject = new VirtualJavaFileObject(className, null);
-            sources.put(className, virtualJavaFileObject);
-            return virtualJavaFileObject;
-        } else {
-            return super.getJavaFileForOutput(location, className, kind, sibling);
+    public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind,
+                                               FileObject sibling) throws IOException {
+        if (kind == JavaFileObject.Kind.CLASS) {
+            VirtualJavaClassObject output = new VirtualJavaClassObject(className, null);
+            outputs.put(className, output);
+            return output;
         }
+        return super.getJavaFileForOutput(location, className, kind, sibling);
     }
 
     @Override
-    public <S> ServiceLoader<S> getServiceLoader(Location location, Class<S> service) throws IOException {
-        return this.classLoader == null ? super.getServiceLoader(location, service) : ServiceLoader.load(service, classLoader);
+    public JavaFileObject getJavaFileForInput(Location location, String className, JavaFileObject.Kind kind) throws IOException {
+        if (kind == JavaFileObject.Kind.CLASS) {
+            JavaFileObject file = null;
+            if (location == StandardLocation.CLASS_PATH) file = dependencies.get(className);
+            if (location == StandardLocation.CLASS_OUTPUT) file = outputs.get(className);
+            if (file != null) return file;
+        }
+        return super.getJavaFileForInput(location, className, kind);
     }
 
     @Override
-    public Iterable<JavaFileObject> list(Location location, String packageName, Set<JavaFileObject.Kind> kinds, boolean recurse) throws IOException {
-        List<JavaFileObject> ret = new ArrayList<>();
-        if (this.classLoader != null) {
-            if ((StandardLocation.CLASS_OUTPUT.equals(location) || StandardLocation.CLASS_PATH.equals(location))
-                    && kinds.contains(JavaFileObject.Kind.CLASS)) {
-                for (Map.Entry<String, byte[]> e : classLoader.classes.entrySet()) {
-                    if (e.getKey().startsWith(packageName + ".")) {
-                        if (recurse || e.getKey().lastIndexOf('.') == packageName.length()) {
-                            ret.add(new VirtualJavaClassObject(e.getKey(), e.getValue()));
-                        }
-                    }
-                }
+    public Iterable<JavaFileObject> list(Location location, String packageName, Set<JavaFileObject.Kind> kinds,
+                                         boolean recurse) throws IOException {
+        if (location != StandardLocation.CLASS_PATH || !kinds.contains(JavaFileObject.Kind.CLASS)) {
+            return super.list(location, packageName, kinds, recurse);
+        }
+        Map<String, JavaFileObject> files = new LinkedHashMap<>();
+        for (Map.Entry<String, VirtualJavaClassObject> entry : dependencies.entrySet()) {
+            String name = entry.getKey();
+            int separator = name.lastIndexOf('.');
+            String ownerPackage = separator < 0 ? "" : name.substring(0, separator);
+            if (ownerPackage.equals(packageName) || (recurse && (packageName.isEmpty() || ownerPackage.startsWith(packageName + ".")))) {
+                files.put(name, entry.getValue());
             }
         }
-        Iterable<JavaFileObject> superList = super.list(location, packageName, kinds, recurse);
-        if (superList != null) for (JavaFileObject f : superList)
-            ret.add(f);
-        return ret;
+        for (JavaFileObject file : super.list(location, packageName, kinds, recurse)) {
+            files.putIfAbsent(super.inferBinaryName(location, file), file);
+        }
+        return files.values();
     }
 
     @Override
     public String inferBinaryName(Location location, JavaFileObject file) {
-        if (file instanceof VirtualJavaClassObject) {
-            return file.getName();
-        } else return super.inferBinaryName(location, file);
+        if (file instanceof VirtualJavaClassObject virtual) return virtual.getBinaryName();
+        return super.inferBinaryName(location, file);
+    }
+
+    @Override
+    public boolean contains(Location location, FileObject file) throws IOException {
+        if (file instanceof VirtualJavaClassObject virtual) {
+            return (location == StandardLocation.CLASS_PATH && dependencies.get(virtual.getBinaryName()) == file)
+                    || (location == StandardLocation.CLASS_OUTPUT && outputs.get(virtual.getBinaryName()) == file);
+        }
+        return super.contains(location, file);
     }
 }

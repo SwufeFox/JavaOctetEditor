@@ -16,9 +16,7 @@
 
 package cn.enaium.joe.service.decompiler;
 
-import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.MessageUtil;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.classes.JarHelper;
 import cn.enaium.joe.util.config.util.CachedGlobalValue;
@@ -26,7 +24,6 @@ import org.jetbrains.java.decompiler.main.decompiler.BaseDecompiler;
 import org.jetbrains.java.decompiler.main.extern.IContextSource;
 import org.jetbrains.java.decompiler.main.extern.IFernflowerLogger;
 import org.jetbrains.java.decompiler.main.extern.IResultSaver;
-import org.tinylog.Logger;
 
 
 import java.io.ByteArrayInputStream;
@@ -40,12 +37,19 @@ import java.util.jar.Manifest;
  * @since 1.0.0
  */
 public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompiler, IResultSaver, IContextSource, IContextSource.IOutputSink {
-    private String returned;
+    private volatile String returned;
+    private final Jar archive;
+    private final Map<String, Object> properties;
+    private final JarLibrary library;
+    private final List<String> failures = Collections.synchronizedList(new ArrayList<>());
     private ClassNode toDecompileClass;
     private HashMap<String, ClassNode> classNodeHashMap;
 
     public static final CachedGlobalValue<Map<String, Object>> customProperties = new CachedGlobalValue<>(config -> {
-        Map<String, String> map = JavaOctetEditor.getInstance().CONFIG.getConfigMapStrings(config);
+        Map<String, String> map = new HashMap<>();
+        config.getConfigMap().forEach((name, value) -> {
+            if (value.getValue() != null) map.put(name, value.getValue().toString());
+        });
         HashMap<String, Object> hashMap = new HashMap<>(map.size());
         for (Map.Entry<String, String> entry : map.entrySet()) {
             String v = entry.getValue();
@@ -59,15 +63,28 @@ public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompil
         return Collections.unmodifiableMap(hashMap);
     });
 
+    public VineFlowerDecompiler(Jar archive) {
+        this(archive, Map.of());
+    }
+
+    public VineFlowerDecompiler(Jar archive, Map<String, Object> properties) {
+        this.archive = Objects.requireNonNull(archive, "Archive");
+        this.library = new JarLibrary(archive);
+        this.properties = properties == null ? Map.of() : Map.copyOf(properties);
+    }
+
     @Override
-    public String decompile(final ClassNode classNode) {
+    public synchronized String decompile(final ClassNode classNode) {
         toDecompileClass = classNode;
-        classNodeHashMap = JarHelper.getAllNodes(classNode);
+        classNodeHashMap = JarHelper.getAllNodes(archive, classNode);
         returned = null;
-        BaseDecompiler baseDecompiler = new BaseDecompiler(this, customProperties.getValue(), this);
+        failures.clear();
+        BaseDecompiler baseDecompiler = new BaseDecompiler(this, properties, this);
         baseDecompiler.addSource(this);
-        baseDecompiler.addLibrary(new JarLibrary(JavaOctetEditor.getInstance().getJar()));
+        baseDecompiler.addLibrary(library);
         baseDecompiler.decompileContext();
+        if (!failures.isEmpty()) throw new IllegalStateException("VineFlower could not decompile " + classNode.getInternalName() + ": " + String.join("; ", failures));
+        if (returned == null || returned.isBlank()) throw new IllegalStateException("VineFlower produced no source for " + classNode.getInternalName());
         return returned;
     }
 
@@ -80,32 +97,22 @@ public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompil
 
     @Override
     public void writeMessage(String message, Throwable t) {
-        Logger.info(t, message);
+        failures.add(message + ": " + t);
     }
 
     @Override
     public void writeMessage(String message, Severity severity) {
-        switch (severity) {
-            case INFO -> Logger.info(message);
-            case WARN -> Logger.warn(message);
-            //case TRACE -> Logger.trace(message);
-            case ERROR -> Logger.error(message);
-        }
+        if (severity == Severity.ERROR) failures.add(message);
     }
 
     @Override
     public void writeMessage(String message, Severity severity, Throwable t) {
-        switch (severity) {
-            case INFO -> Logger.info(t, message);
-            case WARN -> Logger.warn(t, message);
-            case TRACE -> Logger.trace(t, message);
-            case ERROR -> Logger.error(message, t);
-        }
+        if (severity == Severity.ERROR) failures.add(message + ": " + t);
     }
 
     @Override
     public String getName() {
-        return JavaOctetEditor.TITLE;
+        return "JavaOctetEditor source";
     }
 
     @Override
@@ -119,8 +126,8 @@ public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompil
     }
 
     @Override
-    public InputStream getInputStream(String resource) {
-        return null;
+    public InputStream getInputStream(String resource) throws IOException {
+        return library.getInputStream(resource);
     }
 
     @Override
@@ -189,7 +196,7 @@ public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompil
     }
 
     public static class JarLibrary implements IContextSource {
-        protected Jar jar;
+        private final Jar jar;
 
         public JarLibrary(Jar jar) {
             this.jar = jar;
@@ -207,19 +214,26 @@ public class VineFlowerDecompiler extends IFernflowerLogger implements IDecompil
 
         @Override
         public InputStream getInputStream(String resource) {
-            return null;
+            if (resource.endsWith(".class")) {
+                ClassNode node = jar.getClassNode(resource.substring(0, resource.length() - 6));
+                if (node != null) return new ByteArrayInputStream(node.getClassBytes());
+            }
+            byte[] bytes = jar.getResource(resource);
+            return bytes == null ? ClassLoader.getSystemResourceAsStream(resource) : new ByteArrayInputStream(bytes);
         }
 
         @Override
-        public byte[] getClassBytes(String className) {
-            if (jar.hasClass(className)) jar.getClassNode(className).getClassBytes();
-            return null;
+        public byte[] getClassBytes(String className) throws IOException {
+            ClassNode node = jar.getClassNode(className);
+            if (node != null) return node.getClassBytes();
+            try (InputStream input = ClassLoader.getSystemResourceAsStream(className + ".class")) {
+                return input == null ? null : input.readAllBytes();
+            }
         }
 
         @Override
-        public boolean hasClass(String className) throws IOException {
-            Logger.error("has class? " + className);
-            return jar.hasClass(className);
+        public boolean hasClass(String className) {
+            return jar.hasClass(className) || ClassLoader.getSystemResource(className + ".class") != null;
         }
     }
 }

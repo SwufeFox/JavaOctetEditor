@@ -42,7 +42,8 @@ public class TextTablePanel extends BorderPanel {
             String syntax = SyntaxConstants.SYNTAX_STYLE_NONE;
             for (Map.Entry<String, List<String>> stringListEntry : FileTypeUtil.get().getDefaultContentTypeToFilterMap().entrySet()) {
                 for (String s : stringListEntry.getValue()) {
-                    if (name.matches("." + s)) {
+                    String pattern = s.replace(".", "\\.").replace("*", ".*").replace("?", ".");
+                    if (name.matches("(?i)" + pattern)) {
                         syntax = stringListEntry.getKey();
                         break;
                     }
@@ -53,7 +54,7 @@ public class TextTablePanel extends BorderPanel {
 
             KeyStrokeUtil.register(getTextArea(), JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).keymap.getValue().save.getValue(), () -> {
                 fileTreeNode.setData(getTextArea().getText().getBytes(StandardCharsets.UTF_8));
-                MessageUtil.info(LangUtil.i18n("success"));
+                MessageUtil.info(LangUtil.i18n("source.saved"));
             });
         }});
     }

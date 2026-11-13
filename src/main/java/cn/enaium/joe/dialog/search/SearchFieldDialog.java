@@ -61,15 +61,7 @@ public class SearchFieldDialog extends SearchDialog {
                         return;
                     }
 
-                    ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-
-                    JavaOctetEditor.getInstance().TASKS
-                            .submit(new SearchFieldTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText()))
-                            .thenAccept(it -> {
-                                for (ResultNode resultNode : it) {
-                                    ((DefaultListModel<ResultNode>) resultList.getModel()).addElement(resultNode);
-                                }
-                            });
+                    runSearch(new SearchFieldTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText()));
                 });
             }});
         }}, BorderLayout.SOUTH);

@@ -6,7 +6,6 @@ name: Build Test Artifact
 
 on:
   push:
-    branches:
     paths-ignore:
         - 'docs/**'
 
@@ -33,4 +32,6 @@ jobs:
             uses: actions/upload-artifact@v4.3.3
             with:
               name: JavaOctetEditor-snapshot-${{ github.run_number}}.jar
-              path: build/libs
+              path: |
+                build/libs/*.jar
+                !build/libs/*-plain.jar

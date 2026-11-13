@@ -73,6 +73,7 @@ public class FileTree extends JTree {
             }
         });
         KeyStrokeUtil.register(this, JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).keymap.getValue().copy.getValue(), this::copyFile);
+        KeyStrokeUtil.register(this, KeyStroke.getKeyStroke("ENTER"), this::addTab);
 
         JPopupMenu jPopupMenu = new JPopupMenu();
 
@@ -91,17 +92,22 @@ public class FileTree extends JTree {
         }
         Object lastPathComponent = getSelectionPath().getLastPathComponent();
         SwingUtilities.invokeLater(() -> {
-            if (lastPathComponent instanceof PackageTreeNode packageTreeNode) {
-                if (packageTreeNode instanceof ClassTreeNode) {
-                    ClassNode classNode = ((ClassTreeNode) packageTreeNode).classNode;
-                    JavaOctetEditor.getInstance().fileTabbedPanel.addTab(classNode.getSimpleName(), new ClassTabPanel(classNode));
+            var tabs = JavaOctetEditor.getInstance().fileTabbedPanel;
+            if (lastPathComponent instanceof ClassTreeNode node) {
+                for (int i = 0; i < tabs.getTabCount(); i++) {
+                    if (tabs.getComponentAt(i) instanceof ClassTabPanel panel && panel.classNode == node.classNode) {
+                        tabs.setSelectedIndex(i);
+                        return;
+                    }
                 }
-            } else if (lastPathComponent instanceof FolderTreeNode folderTreeNode) {
-                if (folderTreeNode instanceof FileTreeNode fileTreeNode) {
-                    JavaOctetEditor.getInstance().fileTabbedPanel.addTab(fileTreeNode.toString().substring(fileTreeNode.toString().lastIndexOf("/") + 1), new FileTablePane(fileTreeNode));
-                }
+                ClassTabPanel panel = new ClassTabPanel(node.classNode);
+                tabs.addTab(node.classNode.getSimpleName(), panel);
+                tabs.setSelectedComponent(panel);
+            } else if (lastPathComponent instanceof FileTreeNode node) {
+                FileTablePane panel = new FileTablePane(node);
+                tabs.addTab(node.getName(), panel);
+                tabs.setSelectedComponent(panel);
             }
-            JavaOctetEditor.getInstance().fileTabbedPanel.setSelectedIndex(JavaOctetEditor.getInstance().fileTabbedPanel.getTabCount() - 1);
         });
     }
 
@@ -149,10 +155,18 @@ public class FileTree extends JTree {
     }
 
     public void refresh(Jar jar) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> refresh(jar));
+            return;
+        }
         DefaultTreeModel model = (DefaultTreeModel) getModel();
         model.reload();
         classesRoot.removeAllChildren();
         resourceRoot.removeAllChildren();
+        if (jar == null) {
+            model.reload();
+            return;
+        }
 
         ApplicationConfig config = JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class);
 
@@ -288,7 +302,6 @@ public class FileTree extends JTree {
             sort(model, resourceRoot);
         }
 
-        JavaOctetEditor.getInstance().fileTabbedPanel.removeAll();
 
         repaint();
     }

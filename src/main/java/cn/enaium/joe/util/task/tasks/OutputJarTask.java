@@ -16,17 +16,13 @@
 
 package cn.enaium.joe.util.task.tasks;
 
+import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.MessageUtil;
-import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.task.AbstractTask;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.util.Map;
-import java.util.jar.JarEntry;
-import java.util.zip.ZipOutputStream;
+import java.io.UncheckedIOException;
 
 /**
  * @author Enaium
@@ -44,28 +40,11 @@ public class OutputJarTask extends AbstractTask<Boolean> {
 
     @Override
     public Boolean get() {
-        float loaded = 0;
-        float files = jar.getClassSize()+ jar.getResourceSize();
-
         try {
-            ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(out.toPath()));
-            for (ClassNode stringClassNodeEntry : jar.getClasses()) {
-                zipOutputStream.putNextEntry(new JarEntry(stringClassNodeEntry.getInternalName()+ ".class"));
-                zipOutputStream.write(stringClassNodeEntry.getClassBytes());
-                setProgress((int) ((loaded++ / files) * 100f));
-            }
-
-            for (Map.Entry<String, byte[]> stringEntry : jar.getResources().entrySet()) {
-                zipOutputStream.putNextEntry(new JarEntry(stringEntry.getKey()));
-                zipOutputStream.write(stringEntry.getValue());
-                setProgress((int) ((loaded++ / files) * 100f));
-            }
-            zipOutputStream.closeEntry();
-            zipOutputStream.close();
-        } catch (IOException ex) {
-            MessageUtil.error(ex);
-            return false;
+            ArchiveIO.write(jar, out.toPath(), this::setProgress);
+            return true;
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not export archive: " + out, exception);
         }
-        return true;
     }
 }

@@ -45,6 +45,7 @@ public abstract class SearchInstructionTask<T> extends AbstractTask<T> {
         for (ClassNode classNode : jar.getClasses()) {
             for (MethodNode method : classNode.getMethods()) {
                 for (AbstractInsnNode instruction : method.instructions) {
+                    if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Search cancelled");
                     consumer.accept(classNode, instruction);
                 }
             }

@@ -19,10 +19,8 @@ package cn.enaium.joe.util.config;
 import cn.enaium.joe.util.config.value.Value;
 
 import java.lang.reflect.Field;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.lang.reflect.Modifier;
+import java.util.*;
 import java.util.function.Consumer;
 
 /**
@@ -32,8 +30,8 @@ import java.util.function.Consumer;
 public class Config {
     private final String name;
 
-    private transient final Set<Consumer<Config>> listeners;
-    private transient Map<String, Value<?>> values = null;
+    private transient final List<Consumer<Config>> listeners;
+    private transient Map<String, Value<?>> values = Collections.emptyMap();
 
     public Config(String name) {
         this(name, Collections.emptySet());
@@ -41,27 +39,29 @@ public class Config {
 
     public Config(String name, Set<Consumer<Config>> listeners ) {
         this.name = name;
-        this.listeners = listeners;
+        this.listeners = List.copyOf(listeners);
     }
 
     // Must call this in the end of constructor
     protected void postInit(){
-        Class<?> thisClass = this.getClass();
-        Map<String, Value<?>> map = new HashMap<>();
-        for (Field declaredField : thisClass.getDeclaredFields()) {
-            declaredField.setAccessible(true);
-            if (declaredField.getType().isAssignableFrom(Value.class)) {
+        Map<String, Value<?>> map = new TreeMap<>();
+        for (Class<?> type = getClass(); type != Config.class && type != null; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers()) || !Value.class.isAssignableFrom(field.getType())) {
+                    continue;
+                }
+                field.setAccessible(true);
                 try {
-                    Object o = declaredField.get(this);
-                    if (o instanceof Value<?>) {
-                        map.put(declaredField.getName(), (Value<?>) o);
+                    Value<?> value = (Value<?>) field.get(this);
+                    if (value != null) {
+                        map.putIfAbsent(field.getName(), value);
                     }
                 } catch (IllegalAccessException e) {
-                    throw new RuntimeException(e);
+                    throw new IllegalStateException("Could not access setting " + field.getName(), e);
                 }
             }
         }
-        this.values = map;
+        this.values = Collections.unmodifiableMap(map);
     }
 
     public Map<String, Value<?>> getConfigMap(){
@@ -69,9 +69,16 @@ public class Config {
     }
 
     public void update(){
-        for(Consumer<Config> consumer : listeners){
-            consumer.accept(this);
+        RuntimeException failure = null;
+        for (Consumer<Config> consumer : listeners) {
+            try {
+                consumer.accept(this);
+            } catch (RuntimeException e) {
+                if (failure == null) failure = e;
+                else if (failure != e) failure.addSuppressed(e);
+            }
         }
+        if (failure != null) throw failure;
     }
 
     public String getName() {

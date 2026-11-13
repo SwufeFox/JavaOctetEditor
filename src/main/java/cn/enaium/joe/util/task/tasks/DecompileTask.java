@@ -30,15 +30,20 @@ import org.tinylog.Logger;
 public class DecompileTask extends AbstractTask<String> {
 
     private final ClassNode classNode;
+    private final cn.enaium.joe.service.decompiler.IDecompiler decompiler;
 
     public DecompileTask(ClassNode classNode) {
-        super("Decompile");
-        this.classNode = classNode;
+        super("Decompile " + classNode.getInternalName());
+        this.classNode = classNode.copy();
+        this.decompiler = DecompileService.getService();
     }
 
     @Override
     public String get() {
         Logger.info("DECOMPILE:{}", classNode.getInternalName());
-        return DecompileService.getService().decompile(classNode);
+        if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Decompilation cancelled");
+        String source = decompiler.decompile(classNode);
+        setProgress(100);
+        return source;
     }
 }

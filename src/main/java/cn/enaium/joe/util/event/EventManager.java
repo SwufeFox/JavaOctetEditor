@@ -18,6 +18,7 @@ package cn.enaium.joe.util.event;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -32,26 +33,42 @@ public class EventManager {
             new ConcurrentHashMap<>();
 
     public <T extends Event> void register(Class<T> eventType, Consumer<T> consumer) {
+        Objects.requireNonNull(eventType);
+        Objects.requireNonNull(consumer);
         listenerMap.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>())
                 .add(consumer);
     }
 
     public void call(Event event) {
-        for (Map.Entry<Class<? extends Event>, List<Consumer<? extends Event>>> entry :
-                listenerMap.entrySet()) {
+        Objects.requireNonNull(event);
+        RuntimeException failure = null;
+        for (Map.Entry<Class<? extends Event>, List<Consumer<? extends Event>>> entry : listenerMap.entrySet()) {
             if (entry.getKey().isAssignableFrom(event.getClass())) {
-                dispatchEvent(event, entry.getValue());
+                try {
+                    dispatchEvent(event, entry.getValue());
+                } catch (RuntimeException e) {
+                    if (failure == null) failure = e;
+                    else if (failure != e) failure.addSuppressed(e);
+                }
             }
         }
+        if (failure != null) throw failure;
     }
 
     @SuppressWarnings("unchecked")
     private <T extends Event> void dispatchEvent(Event event, List<Consumer<? extends Event>> consumers) {
         T typedEvent = (T) event;
-        consumers.forEach(consumer -> {
+        RuntimeException failure = null;
+        for (Consumer<? extends Event> consumer : consumers) {
             Consumer<T> typedConsumer = (Consumer<T>) consumer;
-            typedConsumer.accept(typedEvent);
-        });
+            try {
+                typedConsumer.accept(typedEvent);
+            } catch (RuntimeException e) {
+                if (failure == null) failure = e;
+                else if (failure != e) failure.addSuppressed(e);
+            }
+        }
+        if (failure != null) throw failure;
     }
 
     /**

@@ -29,6 +29,7 @@ import java.awt.*;
 public class FieldDialog extends Dialog {
     public FieldDialog(ClassNode classNode, FieldNode fieldNode) {
         super(classNode.getInternalName() + "#" + fieldNode.name);
+        classNode.getClassNode();
         setLayout(new BorderLayout());
         add(new FieldInfoPanel(fieldNode), BorderLayout.CENTER);
     }

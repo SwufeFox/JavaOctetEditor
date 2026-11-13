@@ -19,15 +19,7 @@ public class SearchInstructionDialog extends SearchDialog {
             add(new JButton(LangUtil.i18n("button.search")) {{
                 addActionListener(e -> {
                     if (opcodeBox.getSelectedItem() != null) {
-                        ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                        JavaOctetEditor.getInstance().TASKS
-                                .submit(new SearchOpcodeTask(JavaOctetEditor.getInstance().getJar(), (String) opcodeBox.getSelectedItem()))
-                                .thenAccept(it -> {
-                                    ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                                    for (ResultNode resultNode : it) {
-                                        ((DefaultListModel<ResultNode>) resultList.getModel()).addElement(resultNode);
-                                    }
-                                });
+                        runSearch(new SearchOpcodeTask(JavaOctetEditor.getInstance().getJar(), (String) opcodeBox.getSelectedItem()));
                     }
                 });
             }});

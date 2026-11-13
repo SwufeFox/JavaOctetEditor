@@ -19,71 +19,84 @@ package cn.enaium.joe.gui.panel;
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.annotation.Indeterminate;
 import cn.enaium.joe.gui.panel.popup.TaskListPopup;
+import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.task.AbstractTask;
 import cn.enaium.joe.util.Pair;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * @author Enaium
  */
 public class BottomPanel extends JPanel {
+    private final JLabel archiveStatus = new JLabel();
+    private final JProgressBar progress = new JProgressBar(0, 100);
+    private final JButton tasksButton = new JButton(LangUtil.i18n("tasks.show"));
+    private final JButton cancelButton = new JButton(LangUtil.i18n("tasks.cancelAll"));
+    private final TaskListPopup taskListPopup = new TaskListPopup();
+    private final Timer timer = new Timer(250, event -> refreshStatus());
 
     public BottomPanel() {
-        super(new GridLayout(1, 2));
-        this.setBorder(new EmptyBorder(5, 5, 5, 5));
-        add(new JLabel("\u00A9 JavaOctetEditor 2024"));
-        TaskListPopup taskListPopup = new TaskListPopup();
-        JProgressBar jProgressBar = new JProgressBar() {{
+        super(new BorderLayout(12, 0));
+        setBorder(new EmptyBorder(5, 8, 5, 8));
+        add(archiveStatus, BorderLayout.WEST);
+        progress.setStringPainted(true);
+        add(progress, BorderLayout.CENTER);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        actions.add(tasksButton);
+        actions.add(cancelButton);
+        add(actions, BorderLayout.EAST);
+        tasksButton.addActionListener(event -> {
+            Point location = tasksButton.getLocationOnScreen();
+            taskListPopup.place(location.x - taskListPopup.getPreferredSize().width + tasksButton.getWidth(),
+                    location.y - taskListPopup.getPreferredSize().height);
+        });
+        cancelButton.addActionListener(event -> JavaOctetEditor.getInstance().TASKS.cancelAll());
+        refreshStatus();
+    }
 
-            JProgressBar self = this;
-            addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    Point locationOnScreen = self.getLocationOnScreen();
-                    taskListPopup.place(locationOnScreen.x, locationOnScreen.y - taskListPopup.getPreferredSize().height);
-                }
-            });
-        }};
+    public void refreshStatus() {
+        var app = JavaOctetEditor.getInstance();
+        var archive = app.getJar();
+        archiveStatus.setText(archive == null ? LangUtil.i18n("workspace.noArchive")
+                : LangUtil.i18n("workspace.archiveStatus", archive.getClassSize(), archive.getResourceSize()));
+        List<Pair<AbstractTask<?>, CompletableFuture<?>>> tasks = app.TASKS.getTask();
+        cancelButton.setEnabled(tasks.stream().anyMatch(entry -> !entry.getValue().isDone()));
+        tasksButton.setText(LangUtil.i18n("tasks.show") + " (" + tasks.size() + ")");
+        if (tasks.isEmpty()) {
+            progress.setIndeterminate(false);
+            progress.setValue(0);
+            progress.setString(LangUtil.i18n("tasks.ready"));
+        } else {
+            var entry = tasks.getLast();
+            AbstractTask<?> task = entry.getKey();
+            boolean cancelling = entry.getValue().isCancelled();
+            boolean indeterminate = cancelling || task.getClass().isAnnotationPresent(Indeterminate.class);
+            progress.setIndeterminate(indeterminate);
+            progress.setValue(task.getProgress());
+            progress.setString(cancelling ? LangUtil.i18n("tasks.cancelling", task.getName())
+                    : task.getName() + (indeterminate ? "" : " — " + task.getProgress() + "%"));
+        }
+    }
 
-        add(jProgressBar);
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        timer.start();
+    }
 
-        ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
-        scheduledExecutorService.scheduleAtFixedRate(() -> {
-            List<Pair<AbstractTask<?>, CompletableFuture<?>>> task = JavaOctetEditor.getInstance().TASKS.getTask();
-            if (task.isEmpty()) {
-                SwingUtilities.invokeLater(() -> {
-                    jProgressBar.setValue(0);
-                    jProgressBar.setStringPainted(true);
-                    jProgressBar.setIndeterminate(false);
-                    jProgressBar.setString("");
-                    jProgressBar.repaint();
-                });
-            } else {
-                Pair<AbstractTask<?>, CompletableFuture<?>> classCompletableFuturePair = task.get(task.size() - 1);
-                SwingUtilities.invokeLater(() -> {
-                    int progress = classCompletableFuturePair.getKey().getProgress();
-                    if (!classCompletableFuturePair.getKey().getClass().isAnnotationPresent(Indeterminate.class)) {
-                        jProgressBar.setValue(progress);
-                        jProgressBar.setStringPainted(true);
-                        jProgressBar.setIndeterminate(false);
-                        jProgressBar.setString(String.format("%s:%s", classCompletableFuturePair.getKey().getName(), progress) + "%");
-                    } else {
-                        jProgressBar.setString(classCompletableFuturePair.getKey().getName());
-                        jProgressBar.setIndeterminate(true);
-                    }
-                    jProgressBar.repaint();
-                });
-            }
-        }, 1, 1, TimeUnit.MILLISECONDS);
+    @Override
+    public void removeNotify() {
+        shutdown();
+        super.removeNotify();
+    }
+
+    public void shutdown() {
+        timer.stop();
+        taskListPopup.destroy();
     }
 }

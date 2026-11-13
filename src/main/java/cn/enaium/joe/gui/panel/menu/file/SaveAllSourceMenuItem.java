@@ -34,12 +34,15 @@ public class SaveAllSourceMenuItem extends JMenuItem {
         addActionListener(e -> {
             Jar jar = JavaOctetEditor.getInstance().getJar();
             if (jar == null) {
+                cn.enaium.joe.util.MessageUtil.warning(LangUtil.i18n("workspace.open"));
                 return;
             }
 
             File show = JFileChooserUtil.show(JFileChooserUtil.Type.SAVE);
             if (show != null) {
-                JavaOctetEditor.getInstance().TASKS.submit(new SaveAllSourceTask(jar, show));
+                JavaOctetEditor.getInstance().TASKS.submit(new SaveAllSourceTask(jar, show)).thenAccept(success -> {
+                    if (success) cn.enaium.joe.util.MessageUtil.info(LangUtil.i18n("workspace.exported", show.getAbsolutePath()));
+                });
             }
         });
     }

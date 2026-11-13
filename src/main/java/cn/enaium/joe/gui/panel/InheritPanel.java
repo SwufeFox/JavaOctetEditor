@@ -54,7 +54,9 @@ public class InheritPanel extends BorderPanel {
                             if (lastPathComponent instanceof PackageTreeNode packageTreeNode) {
                                 if (packageTreeNode instanceof ClassTreeNode) {
                                     ClassNode classNode = ((ClassTreeNode) packageTreeNode).classNode;
-                                    JavaOctetEditor.getInstance().fileTabbedPanel.addTab(classNode.getSimpleName(), new ClassTabPanel(classNode));
+                                    ClassTabPanel panel = new ClassTabPanel(classNode);
+                                    JavaOctetEditor.getInstance().fileTabbedPanel.addTab(classNode.getSimpleName(), panel);
+                                    JavaOctetEditor.getInstance().fileTabbedPanel.setSelectedComponent(panel);
                                 }
                             }
                         }
@@ -82,15 +84,16 @@ public class InheritPanel extends BorderPanel {
     private void setModel(JTree jTree, boolean p) {
         if (current != null) {
             jTree.setModel(new DefaultTreeModel(new ClassTreeNode(current) {{
-                recursion(this, p);
+                recursion(this, p, new java.util.HashSet<>());
             }}));
             JTreeUtil.setTreeExpandedState(jTree, true);
         }
     }
 
-    private void recursion(ClassTreeNode classTreeNode, boolean parent) {
+    private void recursion(ClassTreeNode classTreeNode, boolean parent, Set<String> path) {
         ClassNode classNode = classTreeNode.classNode;
         Jar jar = JavaOctetEditor.getInstance().getJar();
+        if (jar == null || !path.add(classNode.getInternalName())) return;
         if (parent) {
             for (String s : classNode.getParents()) {
                 ClassTreeNode newChild = null;
@@ -104,7 +107,7 @@ public class InheritPanel extends BorderPanel {
                 }
                 if (newChild != null) {
                     classTreeNode.add(newChild);
-                    recursion(newChild, true);
+                    recursion(newChild, true, path);
                 }
             }
         } else {
@@ -113,9 +116,10 @@ public class InheritPanel extends BorderPanel {
                 if (parentClass.contains(classNode.getInternalName())) {
                     ClassTreeNode newChild = new ClassTreeNode(value);
                     classTreeNode.add(newChild);
-                    recursion(newChild, false);
+                    recursion(newChild, false, path);
                 }
             }
         }
+        path.remove(classNode.getInternalName());
     }
 }

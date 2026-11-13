@@ -19,40 +19,160 @@ package cn.enaium.joe.util.task;
 import cn.enaium.joe.util.MessageUtil;
 import cn.enaium.joe.util.Pair;
 
+import javax.swing.SwingUtilities;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Objects;
+import java.util.concurrent.*;
+import java.util.function.Consumer;
 
 /**
  * @author Enaium
  * @since 0.10.0
  */
-public class TaskManager {
-    private final ExecutorService executorService = Executors.newCachedThreadPool();
-    private final CopyOnWriteArrayList<Pair<AbstractTask<?>, CompletableFuture<?>>> task = new CopyOnWriteArrayList<>();
+public class TaskManager implements AutoCloseable {
+    private final ExecutorService executorService;
+    private final Consumer<Throwable> errorHandler;
+    private final List<Entry<?>> tasks = new ArrayList<>();
+    private boolean closed;
 
-    public <T> CompletableFuture<T> submit(AbstractTask<T> abstractTask) {
-        for (Pair<AbstractTask<?>, CompletableFuture<?>> classCompletableFuturePair : task) {
-            if (classCompletableFuturePair.getKey().getClass().equals(abstractTask.getClass()) && !classCompletableFuturePair.getKey().getClass().isAnnotationPresent(Repeatable.class)) {
-                MessageUtil.warning("task already exists");
-                throw new RuntimeException("task already exists");
-            }
-        }
-        CompletableFuture<T> completableFuture = CompletableFuture.supplyAsync(abstractTask, executorService);
-        completableFuture.whenComplete((t, throwable) -> {
-            task.removeIf(it -> it.getValue().isDone());
-            if (throwable != null) {
-                MessageUtil.error(throwable);
-            }
-        });
-
-        task.add(new Pair<>(abstractTask, completableFuture));
-        return completableFuture;
+    public TaskManager() {
+        this(Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "joe-task");
+            thread.setDaemon(true);
+            return thread;
+        }), MessageUtil::error);
     }
 
-    public List<Pair<AbstractTask<?>, CompletableFuture<?>>> getTask() {
-        return task;
+    TaskManager(ExecutorService executorService, Consumer<Throwable> errorHandler) {
+        this.executorService = Objects.requireNonNull(executorService);
+        this.errorHandler = Objects.requireNonNull(errorHandler);
+    }
+
+    public synchronized <T> CompletableFuture<T> submit(AbstractTask<T> task) {
+        Objects.requireNonNull(task);
+        Entry<T> entry = new Entry<>(task);
+        if (closed) {
+            entry.finish(null, new RejectedExecutionException("Task manager is closed"));
+            return entry.result;
+        }
+        if (!task.getClass().isAnnotationPresent(Repeatable.class)
+                && tasks.stream().anyMatch(it -> it.task.getClass() == task.getClass())) {
+            entry.finish(null, new IllegalStateException("Task already running: " + task.getName()));
+            return entry.result;
+        }
+        // Registration and duplicate detection are one operation, before dispatch.
+        tasks.add(entry);
+        try {
+            executorService.execute(entry.worker);
+        } catch (RejectedExecutionException failure) {
+            tasks.remove(entry);
+            entry.finish(null, failure);
+        }
+        return entry.result;
+    }
+
+    public synchronized List<Pair<AbstractTask<?>, CompletableFuture<?>>> getTask() {
+        List<Pair<AbstractTask<?>, CompletableFuture<?>>> snapshot = new ArrayList<>(tasks.size());
+        for (Entry<?> entry : tasks) {
+            snapshot.add(new Pair<>(entry.task, entry.result));
+        }
+        return List.copyOf(snapshot);
+    }
+
+    public void cancelAll() {
+        List<Entry<?>> snapshot;
+        synchronized (this) {
+            snapshot = List.copyOf(tasks);
+        }
+        for (Entry<?> entry : snapshot) entry.worker.cancel(true);
+    }
+
+    @Override
+    public void close() {
+        synchronized (this) {
+            if (closed) return;
+            closed = true;
+        }
+        cancelAll();
+        executorService.shutdownNow();
+    }
+
+    private final class Entry<T> {
+        private final AbstractTask<T> task;
+        private final CompletableFuture<T> result = new CompletableFuture<>() {
+            @Override
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                if (SwingUtilities.isEventDispatchThread()) return worker.cancel(mayInterruptIfRunning);
+                FutureTask<Boolean> request = new FutureTask<>(() -> worker.cancel(mayInterruptIfRunning));
+                SwingUtilities.invokeLater(request);
+                boolean interrupted = false;
+                try {
+                    for (;;) {
+                        try {
+                            return request.get();
+                        } catch (InterruptedException failure) {
+                            interrupted = true;
+                        } catch (ExecutionException failure) {
+                            throw new CompletionException(failure.getCause());
+                        }
+                    }
+                } finally {
+                    if (interrupted) Thread.currentThread().interrupt();
+                }
+            }
+        };
+        private final FutureTask<T> worker;
+        private boolean running;
+
+        private Entry(AbstractTask<T> task) {
+            this.task = task;
+            worker = new FutureTask<>(task::get) {
+                @Override
+                public void run() {
+                    synchronized (TaskManager.this) {
+                        if (isCancelled()) return;
+                        running = true;
+                    }
+                    try {
+                        super.run();
+                    } finally {
+                        synchronized (TaskManager.this) {
+                            tasks.remove(Entry.this);
+                        }
+                    }
+                }
+
+                @Override
+                protected void done() {
+                    synchronized (TaskManager.this) {
+                        if (!running || !isCancelled()) tasks.remove(Entry.this);
+                    }
+                    try {
+                        finish(get(), null);
+                    } catch (CancellationException failure) {
+                        finish(null, failure);
+                    } catch (ExecutionException failure) {
+                        finish(null, failure.getCause());
+                    } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        finish(null, failure);
+                    }
+                }
+            };
+        }
+
+        private void finish(T value, Throwable failure) {
+            Runnable completion = () -> {
+                if (failure == null) {
+                    result.complete(value);
+                } else {
+                    result.completeExceptionally(failure);
+                    if (!(failure instanceof CancellationException)) errorHandler.accept(failure);
+                }
+            };
+            if (failure instanceof CancellationException && SwingUtilities.isEventDispatchThread()) completion.run();
+            else SwingUtilities.invokeLater(completion);
+        }
     }
 }

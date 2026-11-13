@@ -20,8 +20,9 @@ import cn.enaium.joe.util.config.util.ConfigValueListener;
 import com.google.gson.JsonElement;
 
 import java.lang.reflect.Type;
-import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
  * @author Enaium
@@ -30,14 +31,14 @@ import java.util.Set;
 public abstract class Value<T> {
     private transient final Type type;
     private final String name;
-    private T value;
+    private volatile T value;
     private final String description;
-    private transient final Set<ConfigValueListener<T>> listeners = new HashSet<>();
+    private transient final Set<ConfigValueListener<T>> listeners = new CopyOnWriteArraySet<>();
 
     public Value(Type type, String name, T value, String description) {
         this.type = type;
         this.name = name;
-        this.setValue(value);
+        this.value = value;
         this.description = description;
     }
 
@@ -60,14 +61,43 @@ public abstract class Value<T> {
     public void setValue(T value) {
         T oldValue = this.value;
         this.value = value;
-        for(ConfigValueListener<T> listener : this.listeners){
-            listener.update(this, oldValue, value);
+        RuntimeException failure = null;
+        for (ConfigValueListener<T> listener : listeners) {
+            try {
+                listener.update(this, oldValue, value);
+            } catch (RuntimeException e) {
+                if (failure == null) failure = e;
+                else if (failure != e) failure.addSuppressed(e);
+            }
         }
+        if (failure != null) throw failure;
     }
 
     public abstract void decode(JsonElement jsonElement);
 
     public void addListener(ConfigValueListener<T> listener) {
-        this.listeners.add(listener);
+        listeners.add(Objects.requireNonNull(listener));
+    }
+
+    protected static void requirePrimitive(JsonElement element, String kind) {
+        if (element == null || !element.isJsonPrimitive()) {
+            throw new IllegalArgumentException("Expected " + kind);
+        }
+        boolean valid = switch (kind) {
+            case "string" -> element.getAsJsonPrimitive().isString();
+            case "boolean" -> element.getAsJsonPrimitive().isBoolean();
+            case "integer" -> element.getAsJsonPrimitive().isNumber();
+            default -> false;
+        };
+        if (!valid) throw new IllegalArgumentException("Expected " + kind);
+    }
+
+    protected static int integer(JsonElement element) {
+        requirePrimitive(element, "integer");
+        try {
+            return element.getAsBigDecimal().intValueExact();
+        } catch (ArithmeticException | NumberFormatException e) {
+            throw new IllegalArgumentException("Expected a 32-bit integer", e);
+        }
     }
 }

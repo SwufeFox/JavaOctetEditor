@@ -17,10 +17,9 @@
 package cn.enaium.joe.gui.panel.file.tabbed.tab.resources;
 
 import cn.enaium.joe.gui.panel.file.tree.node.FileTreeNode;
-import cn.enaium.joe.util.ASyncUtil;
 
 import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
+import javax.swing.table.AbstractTableModel;
 import java.awt.*;
 
 /**
@@ -28,33 +27,26 @@ import java.awt.*;
  * @since 0.7.0
  */
 public class HexTablePanel extends JPanel {
+    private static final String[] HEX = new String[256];
+
+    static {
+        for (int value = 0; value < HEX.length; value++) HEX[value] = String.format("%02X", value);
+    }
+
     public HexTablePanel(FileTreeNode fileTreeNode) {
         super(new BorderLayout());
-        DefaultTableModel defaultTableModel = new DefaultTableModel(new Object[][]{}, new String[]{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"});
-        JTable jTable = new JTable(defaultTableModel) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
+        byte[] data = fileTreeNode.getData();
+        JTable jTable = new JTable(new AbstractTableModel() {
+            @Override public int getRowCount() { return (int) ((data.length + 15L) / 16); }
+            @Override public int getColumnCount() { return 16; }
+            @Override public String getColumnName(int column) { return Integer.toHexString(column).toUpperCase(java.util.Locale.ROOT); }
+            @Override public Object getValueAt(int row, int column) {
+                long index = row * 16L + column;
+                return index < data.length ? HEX[data[(int) index] & 0xFF] : "";
             }
-        };
+        });
         jTable.getTableHeader().setReorderingAllowed(false);
         add(new JScrollPane(jTable), BorderLayout.CENTER);
 
-        ASyncUtil.execute(() -> {
-            int row = 0;
-            Object[] array = new Object[16];
-            byte[] data = fileTreeNode.getData();
-            for (int i = 0; i < data.length; i++) {
-                byte b = data[i];
-                array[row] = String.format("%02X", b);
-                if (row == 15 || i == fileTreeNode.getData().length - 1) {
-                    defaultTableModel.addRow(array);
-                    row = 0;
-                    array = new Object[16];
-                    continue;
-                }
-                row++;
-            }
-        });
     }
 }

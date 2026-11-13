@@ -72,7 +72,7 @@ public class FileDropTarget implements DropTargetListener {
                 Logger.info(ex);
             }
         }
-        if (drop) {
+        if (drop && !files.isEmpty()) {
             dtde.acceptDrag(DnDConstants.ACTION_COPY);
         } else {
             dtde.rejectDrag();
@@ -97,8 +97,23 @@ public class FileDropTarget implements DropTargetListener {
 
     @Override
     public void drop(DropTargetDropEvent dtde) {
-        consumer.accept(files);
-        drop = false;
+        if (!drop || files.isEmpty()) {
+            dtde.rejectDrop();
+            files.clear();
+            drop = false;
+            return;
+        }
+        dtde.acceptDrop(DnDConstants.ACTION_COPY);
+        List<File> accepted = List.copyOf(files);
         files.clear();
+        drop = false;
+        dtde.dropComplete(true);
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            try {
+                consumer.accept(accepted);
+            } catch (RuntimeException failure) {
+                cn.enaium.joe.util.MessageUtil.error(failure);
+            }
+        });
     }
 }

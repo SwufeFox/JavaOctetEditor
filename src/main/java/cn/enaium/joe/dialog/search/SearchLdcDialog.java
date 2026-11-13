@@ -41,15 +41,7 @@ public class SearchLdcDialog extends SearchDialog {
             add(jButton = new JButton(LangUtil.i18n("button.search")) {{
                 addActionListener(e -> {
                     if (!text.getText().isEmpty()) {
-                        ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                        JavaOctetEditor.getInstance().TASKS
-                                .submit(new SearchLdcTask(JavaOctetEditor.getInstance().getJar(), text.getText()))
-                                .thenAccept(it -> {
-                                    ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                                    for (ResultNode resultNode : it) {
-                                        ((DefaultListModel<ResultNode>) resultList.getModel()).addElement(resultNode);
-                                    }
-                                });
+                        runSearch(new SearchLdcTask(JavaOctetEditor.getInstance().getJar(), text.getText()));
                     }
                 });
             }});

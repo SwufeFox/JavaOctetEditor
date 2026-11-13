@@ -38,18 +38,24 @@ public class OptionDialog extends Dialog {
             if (message != null) {
                 bottom.add(new JButton(UIManager.getString("OptionPane.okButton.textAndMnemonic")) {{
                     addActionListener(e -> {
-                        if (confirm != null) {
-                            confirm.run();
+                        try {
+                            if (confirm != null) confirm.run();
+                            dispose();
+                        } catch (RuntimeException failure) {
+                            cn.enaium.joe.util.MessageUtil.error(failure);
                         }
-                        dispose();
                     });
                 }});
 
                 if (cancel != null) {
                     bottom.add(new JButton(UIManager.getString("OptionPane.cancelButton.textAndMnemonic")) {{
                         addActionListener(e -> {
-                            cancel.run();
-                            dispose();
+                            try {
+                                cancel.run();
+                                dispose();
+                            } catch (RuntimeException failure) {
+                                cn.enaium.joe.util.MessageUtil.error(failure);
+                            }
                         });
                     }});
                 }

@@ -16,12 +16,10 @@
 
 package cn.enaium.joe.util.task.tasks;
 
-import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.annotation.Indeterminate;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.mapping.Mapping;
 import cn.enaium.joe.util.mapping.MappingParser;
-import cn.enaium.joe.util.MessageUtil;
 import cn.enaium.joe.util.task.AbstractTask;
 import net.fabricmc.mappingio.format.MappingFormat;
 import org.objectweb.asm.ClassVisitor;
@@ -39,51 +37,60 @@ import java.util.*;
  * @since 1.0.0
  */
 @Indeterminate
-public class RemappingTask extends AbstractTask<Boolean> {
+public class RemappingTask extends AbstractTask<Jar> {
 
 
     public final Map<String, Set<String>> superHashMap = new HashMap<>();
 
     private final File mapping;
     private final MappingFormat mappingFormat;
+    private final Jar original;
 
-    public RemappingTask(File mapping, MappingFormat mappingFormat) {
+    public RemappingTask(Jar archive, File mapping, MappingFormat mappingFormat) {
         super("Remapping");
         this.mapping = mapping;
         this.mappingFormat = mappingFormat;
+        this.original = Objects.requireNonNull(archive).copy();
     }
 
     @Override
-    public Boolean get() {
+    public Jar get() {
 
-        if (mappingFormat == MappingFormat.ENIGMA_FILE) {
-            if (!mapping.getName().endsWith(".mapping")) {
-                MessageUtil.warning("File suffix must be mapping");
-            }
-        }
 
         try {
             Mapping read = MappingParser.read(mapping.toPath(), mappingFormat);
-            Jar oldJar = JavaOctetEditor.getInstance().getJar();
+            Jar oldJar = original;
             Jar jar = new Jar();
             jar.putAllResource(oldJar.getResources());
 
             oldJar.getClasses().forEach(this::analyze);
+            Map<String, Set<String>> ancestors = new HashMap<>();
+            for (String name : superHashMap.keySet()) {
+                Set<String> parents = new LinkedHashSet<>();
+                Set<String> visited = new HashSet<>();
+                ArrayDeque<String> pending = new ArrayDeque<>(superHashMap.get(name));
+                visited.add(name);
+                while (!pending.isEmpty()) {
+                    String parent = pending.removeFirst();
+                    if (!visited.add(parent)) continue;
+                    parents.add(parent);
+                    pending.addAll(superHashMap.getOrDefault(parent, Set.of()));
+                }
+                ancestors.put(name, parents);
+            }
+            int completed = 0;
 
             for (cn.enaium.joe.util.classes.ClassNode stringClassNodeEntry : oldJar.getClasses()) {
+                setProgress(completed++ * 100 / Math.max(1, oldJar.getClassSize()));
                 ClassNode classNode = new ClassNode();
                 ClassRemapper classRemapper = new ClassRemapper(classNode, new SimpleRemapper(read.MAP) {
                     @Override
                     public String mapFieldName(String owner, String name, String descriptor) {
                         String remappedName = map(owner + '.' + name);
                         if (remappedName == null) {
-                            if (superHashMap.containsKey(owner)) {
-                                for (String s : superHashMap.get(owner)) {
-                                    String rn = mapFieldName(s, name, descriptor);
-                                    if (rn != null) {
-                                        return rn;
-                                    }
-                                }
+                            for (String parent : ancestors.getOrDefault(owner, Set.of())) {
+                                String inherited = map(parent + '.' + name);
+                                if (inherited != null) return inherited;
                             }
                         }
 
@@ -94,13 +101,9 @@ public class RemappingTask extends AbstractTask<Boolean> {
                     public String mapMethodName(String owner, String name, String descriptor) {
                         String remappedName = map(owner + '.' + name + descriptor);
                         if (remappedName == null) {
-                            if (superHashMap.containsKey(owner)) {
-                                for (String s : superHashMap.get(owner)) {
-                                    String rn = mapMethodName(s, name, descriptor);
-                                    if (rn != null) {
-                                        return rn;
-                                    }
-                                }
+                            for (String parent : ancestors.getOrDefault(owner, Set.of())) {
+                                String inherited = map(parent + '.' + name + descriptor);
+                                if (inherited != null) return inherited;
                             }
                         }
                         return remappedName == null ? name : remappedName;
@@ -109,11 +112,11 @@ public class RemappingTask extends AbstractTask<Boolean> {
                 stringClassNodeEntry.analyzeVisitor(classRemapper);
                 jar.putClassNode(cn.enaium.joe.util.classes.ClassNode.of(classNode));
             }
-            JavaOctetEditor.getInstance().setJar(jar);
+            setProgress(100);
+            return jar;
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         }
-        return true;
     }
 
     public void analyze(cn.enaium.joe.util.classes.ClassNode classNode) {

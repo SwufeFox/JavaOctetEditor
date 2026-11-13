@@ -24,6 +24,7 @@ import java.awt.*;
 
 public class Dialog extends JDialog {
     public Dialog(String title) {
+        super(cn.enaium.joe.JavaOctetEditor.getInstance() == null ? null : cn.enaium.joe.JavaOctetEditor.getInstance().window, title);
         setTitle(title);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setSize(Util.screenSize(800, 500));

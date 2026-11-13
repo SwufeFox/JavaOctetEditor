@@ -22,7 +22,10 @@ public interface ClassNode {
     default ClassNode copy() {
         return ClassNode.of(this.getClassBytes());
     }
+    /** Returns cached bytecode; callers must treat the returned array as read-only. */
     byte[] getClassBytes();
+
+    /** Returns the live mutable tree and enables serialization of subsequent edits. */
     org.objectweb.asm.tree.ClassNode getClassNode();
     void accept(ClassNode newNode);
     void updateBytes();
@@ -31,11 +34,13 @@ public interface ClassNode {
     }
 
     default String getCanonicalPackageName(){
-        return this.getCanonicalName().substring(0, this.getInternalName().lastIndexOf('.') - 1);
+        return this.getInternalPackageName().replace('/', '.');
     }
 
     default String getInternalPackageName(){
-        return this.getInternalName().substring(0, this.getInternalName().lastIndexOf('/') - 1);
+        String internalName = this.getInternalName();
+        int separator = internalName.lastIndexOf('/');
+        return separator < 0 ? "" : internalName.substring(0, separator);
     }
 
     default String[] getInnerClassesInternalName(){
@@ -62,12 +67,14 @@ public interface ClassNode {
         return this.getNodeInternal().version;
     }
 
+    /** Read-only member view; use getClassNode() before editing members. */
     default MethodNode[] getMethods(){
-        return this.getClassNode().methods.toArray(MethodNode[]::new);
+        return this.getNodeInternal().methods.toArray(MethodNode[]::new);
     }
 
+    /** Read-only member view; use getClassNode() before editing members. */
     default FieldNode[] getFields(){
-        return this.getClassNode().fields.toArray(FieldNode[]::new);
+        return this.getNodeInternal().fields.toArray(FieldNode[]::new);
     }
 
     default void trace(TraceClassVisitor traceClassVisitor){
@@ -83,8 +90,10 @@ public interface ClassNode {
         this.updateBytes();
     }
 
+    /** Marks edits made through getNodeInternal() for the next serialization. */
     void mkdir();
 
+    /** Read-only tree view. Mutating callers must use getClassNode() or call mkdir(). */
     org.objectweb.asm.tree.ClassNode getNodeInternal();
 
     default Set<String> getParents(){
@@ -104,22 +113,16 @@ public interface ClassNode {
         ClassReader classReader = new ClassReader(classIn);
         final org.objectweb.asm.tree.ClassNode classNode = new org.objectweb.asm.tree.ClassNode();
         classReader.accept(classNode, 0);
-
-        final String internalName = classNode.name;
-        final String canonicalName = internalName.replace('/', '.');
-
-        return new Impl(internalName, canonicalName, classIn, classNode);
+        return new Impl(classIn.clone(), classNode);
     }
 
     static ClassNode of(final org.objectweb.asm.tree.ClassNode classNode){
         ClassWriter classWriter = new ClassWriter(0);
         classNode.accept(classWriter);
-        final byte[] bytes = classWriter.toByteArray();
-
-        final String internalName = classNode.name;
-        final String canonicalName = internalName.replace('/', '.');
-
-        return new Impl(internalName, canonicalName, bytes, classNode);
+        byte[] bytes = classWriter.toByteArray();
+        org.objectweb.asm.tree.ClassNode ownedNode = new org.objectweb.asm.tree.ClassNode();
+        new ClassReader(bytes).accept(ownedNode, 0);
+        return new Impl(bytes, ownedNode);
     }
 
     static ClassNode of(final String internalName) {
@@ -132,58 +135,60 @@ public interface ClassNode {
         return of(classNode);
     }
 
-    class Impl implements ClassNode{
+    class Impl implements ClassNode {
+        private boolean dirty;
+        private boolean mutableTreeExposed;
+        private byte[] clazz;
+        private org.objectweb.asm.tree.ClassNode node;
 
-        boolean isDir = false;
-
-        String internalName; String canonicalName; byte[] clazz; org.objectweb.asm.tree.ClassNode node;
-        public Impl(String internalName, String canonicalName, byte[] clazz, org.objectweb.asm.tree.ClassNode node){
-            this.internalName = internalName;
-            this.canonicalName = canonicalName;
+        private Impl(byte[] clazz, org.objectweb.asm.tree.ClassNode node) {
             this.clazz = clazz;
             this.node = node;
         }
 
         @Override
         public byte[] getClassBytes() {
-            if (this.isDir) updateBytes();
-            return this.clazz;
+            if (dirty || mutableTreeExposed) updateBytes();
+            return clazz;
         }
 
         @Override
         public org.objectweb.asm.tree.ClassNode getClassNode() {
-            this.isDir = true;
-            return this.node;
+            // A retained mutable reference can change again after a bytecode read.
+            mutableTreeExposed = true;
+            return node;
         }
 
         @Override
-        public void updateBytes() {ClassWriter classWriter = new ClassWriter(0);
+        public void updateBytes() {
+            ClassWriter classWriter = new ClassWriter(0);
             node.accept(classWriter);
-            this.clazz = classWriter.toByteArray();
-            this.isDir = false;
+            clazz = classWriter.toByteArray();
+            dirty = false;
         }
 
         @Override
         public void accept(ClassNode newNode) {
-            this.internalName = newNode.getInternalName();
-            this.canonicalName = newNode.getCanonicalName();
-            this.clazz = newNode.getClassBytes();
-            this.node = newNode.getClassNode();
+            Impl replacement = (Impl) ClassNode.of(newNode.getClassBytes());
+            clazz = replacement.clazz;
+            node = replacement.node;
+            dirty = false;
+            mutableTreeExposed = false;
         }
 
         @Override
         public ClassNode clone() {
-            return ClassNode.of(this.getClassBytes().clone());
+            return copy();
         }
 
         @Override
         public org.objectweb.asm.tree.ClassNode getNodeInternal() {
-            return this.node;
+            return node;
         }
 
         @Override
         public void mkdir() {
-            this.isDir = true;
+            dirty = true;
         }
     }
 }

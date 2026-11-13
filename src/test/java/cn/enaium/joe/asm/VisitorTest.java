@@ -1,41 +1,35 @@
 package cn.enaium.joe.asm;
 
-import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.compiler.Compiler;
-import cn.enaium.joe.util.ImagineBreakerHelper;
-import org.junit.jupiter.api.Assertions;
+import cn.enaium.joe.util.compiler.virtual.MemoryClassLoader;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.util.ASMifier;
 import org.objectweb.asm.util.TraceClassVisitor;
 
-
-import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.Map;
 
-/**
- * @author Enaium
- */
+import static org.junit.jupiter.api.Assertions.*;
+
 class VisitorTest {
-    static {
-        ImagineBreakerHelper.boot();
-    }
-
     @Test
-    public void test() throws IOException {
-        StringWriter stringWriter = new StringWriter();
-        ClassReader classReader = new ClassReader(this.getClass().getName());
-        classReader.accept(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter)), 0);
-        String name = "asm." + this.getClass().getName() + "Dump";
-        StringWriter errorTracer = new StringWriter();
-        byte[] clazz = Compiler.compileSingle(name, stringWriter.toString(), errorTracer);
-        if (!errorTracer.toString().isEmpty()) {
-            System.out.println(errorTracer);
-        }
-        Assertions.assertNotNull(clazz);
-        StringWriter out = new StringWriter();
-        ClassNode.of(clazz).trace(new TraceClassVisitor(new PrintWriter(out)));
-        System.out.println(out);
+    void asmifiedSourceRecreatesExecutableClass() throws Exception {
+        byte[] original = Compiler.compileSources(Map.of("fixture.Sample", """
+                package fixture;
+                public class Sample { public static int answer() { return 42; } }
+                """), Map.of()).get("fixture.Sample");
+        StringWriter source = new StringWriter();
+        new ClassReader(original).accept(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(source)), 0);
+        StringWriter errors = new StringWriter();
+        byte[] dumpClass = Compiler.compileSingle("asm.fixture.SampleDump", source.toString(), errors);
+        assertNotNull(dumpClass, errors.toString());
+        Class<?> visitor = new MemoryClassLoader(getClass().getClassLoader(), Map.of("asm.fixture.SampleDump", dumpClass))
+                .loadClass("asm.fixture.SampleDump");
+        byte[] recreated = (byte[]) visitor.getMethod("dump").invoke(null);
+        assertEquals("fixture/Sample", new ClassReader(recreated).getClassName());
+        Class<?> sample = new MemoryClassLoader(getClass().getClassLoader(), Map.of("fixture.Sample", recreated)).loadClass("fixture.Sample");
+        assertEquals(42, sample.getMethod("answer").invoke(null));
     }
 }

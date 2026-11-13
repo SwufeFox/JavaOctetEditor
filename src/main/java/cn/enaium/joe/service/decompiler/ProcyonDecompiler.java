@@ -16,73 +16,67 @@
 
 package cn.enaium.joe.service.decompiler;
 
-import cn.enaium.joe.JavaOctetEditor;
-import cn.enaium.joe.util.config.util.CachedGlobalValue;
+import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.classes.ClassNode;
-import cn.enaium.joe.util.classes.JarHelper;
-import cn.enaium.joe.util.reflection.FieldAccessor;
-import cn.enaium.joe.util.reflection.ReflectionHelper;
+import cn.enaium.joe.util.config.util.CachedGlobalValue;
 import com.strobel.assembler.InputTypeLoader;
-import com.strobel.assembler.metadata.Buffer;
-import com.strobel.assembler.metadata.ITypeLoader;
-import com.strobel.assembler.metadata.MetadataSystem;
+import com.strobel.assembler.metadata.*;
 import com.strobel.decompiler.DecompilationOptions;
 import com.strobel.decompiler.DecompilerSettings;
 import com.strobel.decompiler.PlainTextOutput;
 import com.strobel.decompiler.languages.java.JavaFormattingOptions;
-import org.tinylog.Logger;
 
 import java.io.StringWriter;
-import java.util.HashMap;
+import java.util.Objects;
 
-/**
- * @author Enaium
- * @since 0.7.0
- */
 public class ProcyonDecompiler implements IDecompiler {
     public static final CachedGlobalValue<JavaFormattingOptions> cachedFormattingOptions = new CachedGlobalValue<>(config -> {
-        JavaFormattingOptions aDefault = JavaFormattingOptions.createDefault();
-
-        JavaOctetEditor.getInstance().CONFIG.getConfigMap(config).forEach(
-                (s, value) -> {
-                    try {
-                        FieldAccessor<Object, JavaFormattingOptions> f = ReflectionHelper.getFieldAccessor(JavaFormattingOptions.class, value.getName());
-                        f.set(aDefault, value.getValue());
-                    } catch (Throwable e) {
-                        Logger.error(e);
-                    }
-                }
-        );
-        return aDefault;
-    });
-
-    public HashMap<String, ClassNode> activeNodes;
-    @Override
-    public String decompile(ClassNode classNode) {
-        DecompilerSettings decompilerSettings = new DecompilerSettings();
-        this.activeNodes = JarHelper.getAllNodes(classNode);
-        MetadataSystem metadataSystem = new MetadataSystem(new ITypeLoader() {
-            private final InputTypeLoader backLoader = new InputTypeLoader();
-
-            @Override
-            public boolean tryLoadType(String s, Buffer buffer) {
-                if (ProcyonDecompiler.this.activeNodes.containsKey(s)) {
-                    byte[] b = ProcyonDecompiler.this.activeNodes.get(s).getClassBytes();
-                    buffer.putByteArray(b, 0, b.length);
-                    buffer.position(0);
-                    return true;
-                } else {
-                    return backLoader.tryLoadType(s, buffer);
-                }
+        JavaFormattingOptions formatting = JavaFormattingOptions.createDefault();
+        config.getConfigMap().forEach((name, value) -> {
+            try {
+                JavaFormattingOptions.class.getField(name).set(formatting, value.getValue());
+            } catch (ReflectiveOperationException error) {
+                throw new IllegalArgumentException("Invalid Procyon formatting option: " + name, error);
             }
         });
-        StringWriter stringwriter = new StringWriter();
-        decompilerSettings.getLanguage().decompileType(metadataSystem.lookupType(classNode.getCanonicalName()).resolve(), new PlainTextOutput(stringwriter), new DecompilationOptions(){{
-            setFullDecompilation(true);
-            DecompilerSettings settings = DecompilerSettings.javaDefaults();
-            settings.setJavaFormattingOptions(cachedFormattingOptions.getValue());
-            setSettings(settings);
-        }});
-        return stringwriter.toString();
+        return formatting;
+    });
+
+    private final Jar archive;
+    private final JavaFormattingOptions formatting;
+
+    public ProcyonDecompiler(Jar archive) {
+        this(archive, JavaFormattingOptions.createDefault());
+    }
+
+    public ProcyonDecompiler(Jar archive, JavaFormattingOptions formatting) {
+        this.archive = Objects.requireNonNull(archive, "Archive");
+        this.formatting = formatting == null ? JavaFormattingOptions.createDefault() : formatting;
+    }
+
+    @Override
+    public String decompile(ClassNode classNode) {
+        InputTypeLoader runtimeLoader = new InputTypeLoader();
+        MetadataSystem metadata = new MetadataSystem((name, buffer) -> {
+            ClassNode node = archive.getClassNode(name);
+            if (node == null) return runtimeLoader.tryLoadType(name, buffer);
+            byte[] bytes = node.getClassBytes();
+            buffer.reset(bytes.length);
+            buffer.putByteArray(bytes, 0, bytes.length);
+            buffer.position(0);
+            return true;
+        });
+        TypeReference reference = metadata.lookupType(classNode.getInternalName());
+        TypeDefinition type = reference == null ? null : reference.resolve();
+        if (type == null) throw new IllegalStateException("Procyon could not resolve " + classNode.getInternalName() + " from the supplied archive");
+        DecompilerSettings settings = DecompilerSettings.javaDefaults();
+        settings.setJavaFormattingOptions(formatting);
+        DecompilationOptions options = new DecompilationOptions();
+        options.setFullDecompilation(true);
+        options.setSettings(settings);
+        StringWriter output = new StringWriter();
+        settings.getLanguage().decompileType(type, new PlainTextOutput(output), options);
+        if (output.toString().isBlank()) throw new IllegalStateException("Procyon produced no source for " + classNode.getInternalName());
+        return output.toString();
     }
 }

@@ -73,12 +73,16 @@ public class MethodInstructionPanel extends JPanel {
 
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.clone"), () -> {
             InstructionWrapper selectedValue = instructionJList.getSelectedValue();
-            if (instructionJList.getSelectedIndex() != -1 || selectedValue != null) {
+            if (instructionJList.getSelectedIndex() != -1 && selectedValue != null) {
                 AbstractInsnNode clone;
                 if (selectedValue.getWrapper() instanceof LabelNode) {
                     clone = new LabelNode();
                 } else {
-                    clone = selectedValue.getWrapper().clone(new HashMap<>());
+                    HashMap<LabelNode, LabelNode> labels = new HashMap<>();
+                    for (AbstractInsnNode node : methodNode.instructions) {
+                        if (node instanceof LabelNode label) labels.put(label, label);
+                    }
+                    clone = selectedValue.getWrapper().clone(labels);
                 }
 
                 instructionDefaultListModel.add(instructionJList.getSelectedIndex() + 1, new InstructionWrapper(clone));
@@ -88,9 +92,9 @@ public class MethodInstructionPanel extends JPanel {
 
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.remove"), () -> {
             InstructionWrapper selectedValue = instructionJList.getSelectedValue();
-            if (instructionJList.getSelectedIndex() != -1 || selectedValue != null) {
+            if (instructionJList.getSelectedIndex() != -1 && selectedValue != null) {
                 MessageUtil.confirm(LangUtil.i18n("dialog.wantRemove"), LangUtil.i18n("button.remove"), () -> {
-                    instructionDefaultListModel.remove(instructionJList.getSelectedIndex());
+                    instructionDefaultListModel.removeElement(selectedValue);
                     methodNode.instructions.remove(selectedValue.getWrapper());
                 });
             }
@@ -98,13 +102,13 @@ public class MethodInstructionPanel extends JPanel {
 
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.copyText"), () -> {
             InstructionWrapper selectedValue = instructionJList.getSelectedValue();
-            if (instructionJList.getSelectedIndex() != -1 || selectedValue != null) {
+            if (instructionJList.getSelectedIndex() != -1 && selectedValue != null) {
                 Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(HtmlUtil.remove(selectedValue.toString())), null);
             }
         }, keymapConfig.copy.getValue());
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("button.search"), () -> {
             InstructionWrapper selectedValue = instructionJList.getSelectedValue();
-            if (instructionJList.getSelectedIndex() != -1 || selectedValue != null) {
+            if (instructionJList.getSelectedIndex() != -1 && selectedValue != null) {
                 AbstractInsnNode node = selectedValue.getWrapper();
                 if (node instanceof LdcInsnNode){
                     new SearchLdcDialog(((LdcInsnNode)node)).setVisible(true);
@@ -118,8 +122,8 @@ public class MethodInstructionPanel extends JPanel {
 
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.insertBefore"), () -> insert(methodNode, instructionJList, true), keymapConfig.insertBefore.getValue());
         addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.insertAfter"), () -> insert(methodNode, instructionJList, false), keymapConfig.insertAfter.getValue());
-        addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.moveUp"), () -> moveInstruction(instructionJList, methodNode, true), keymapConfig.insertAfter.getValue());
-        addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.moveDown"), () -> moveInstruction(instructionJList, methodNode, false), keymapConfig.insertAfter.getValue());
+        addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.moveUp"), () -> moveInstruction(instructionJList, methodNode, true), keymapConfig.moveUp.getValue());
+        addItem(instructionJList, jPopupMenu, LangUtil.i18n("popup.instructions.moveDown"), () -> moveInstruction(instructionJList, methodNode, false), keymapConfig.moveDown.getValue());
 
         JMenuUtil.addPopupMenu(instructionJList, () -> jPopupMenu, () -> instructionJList.getSelectedValue() != null);
         add(new JScrollPane(instructionJList), BorderLayout.CENTER);
@@ -140,26 +144,19 @@ public class MethodInstructionPanel extends JPanel {
     }
 
     private static void moveInstruction(JList<InstructionWrapper> instructionJList, MethodNode methodNode, boolean up) {
-        DefaultListModel<InstructionWrapper> instructionDefaultListModel = ((DefaultListModel<InstructionWrapper>) instructionJList.getModel());
-        InstructionWrapper selectedValue = instructionJList.getSelectedValue();
-        if (instructionJList.getSelectedIndex() != -1 || selectedValue != null) {
-            AbstractInsnNode node = up ? selectedValue.getWrapper().getPrevious() : selectedValue.getWrapper().getNext();
-            if (node != null) {
-                try {
-                    InstructionWrapper instructionWrapper = instructionDefaultListModel.get(instructionJList.getSelectedIndex() + (up ? -1 : 1));
-                    instructionDefaultListModel.removeElement(instructionWrapper);
-                    instructionDefaultListModel.add(instructionJList.getSelectedIndex() + (up ? 1 : 0), instructionWrapper);
-                } catch (Exception ignore) {
-
-                }
-                methodNode.instructions.remove(node);
-                if (up) {
-                    methodNode.instructions.insert(selectedValue.getWrapper(), node);
-                } else {
-                    methodNode.instructions.insertBefore(selectedValue.getWrapper(), node);
-                }
-            }
-        }
+        DefaultListModel<InstructionWrapper> model = (DefaultListModel<InstructionWrapper>) instructionJList.getModel();
+        int index = instructionJList.getSelectedIndex();
+        InstructionWrapper selected = instructionJList.getSelectedValue();
+        int target = index + (up ? -1 : 1);
+        if (selected == null || index < 0 || target < 0 || target >= model.size()) return;
+        AbstractInsnNode neighbor = model.get(target).getWrapper();
+        methodNode.instructions.remove(selected.getWrapper());
+        if (up) methodNode.instructions.insertBefore(neighbor, selected.getWrapper());
+        else methodNode.instructions.insert(neighbor, selected.getWrapper());
+        model.remove(index);
+        model.add(target, selected);
+        instructionJList.setSelectedIndex(target);
+        instructionJList.ensureIndexIsVisible(target);
     }
 
     private static void insert(MethodNode methodNode, JList<InstructionWrapper> instructionJList, boolean before) {
@@ -167,6 +164,7 @@ public class MethodInstructionPanel extends JPanel {
             return;
         }
         DefaultListModel<InstructionWrapper> instructionDefaultListModel = ((DefaultListModel<InstructionWrapper>) instructionJList.getModel());
+        InstructionWrapper anchor = instructionJList.getSelectedValue();
         InstructionComboBox instructionComboBox = new InstructionComboBox();
         MessageUtil.confirm(instructionComboBox, "select insert instruction", () -> {
             AbstractInsnNode abstractInsnNode;
@@ -182,7 +180,7 @@ public class MethodInstructionPanel extends JPanel {
                     abstractInsnNode = new VarInsnNode(Opcodes.ILOAD, 0);
                     break;
                 case AbstractInsnNode.TYPE_INSN:
-                    abstractInsnNode = new TypeInsnNode(Opcodes.ILOAD, "");
+                    abstractInsnNode = new TypeInsnNode(Opcodes.NEW, "java/lang/Object");
                     break;
                 case AbstractInsnNode.FIELD_INSN:
                     abstractInsnNode = new FieldInsnNode(Opcodes.GETSTATIC, "", "", "");
@@ -203,10 +201,11 @@ public class MethodInstructionPanel extends JPanel {
                     abstractInsnNode = new LdcInsnNode("");
                     break;
                 case AbstractInsnNode.IINC_INSN:
-                    abstractInsnNode = new IntInsnNode(Opcodes.IINC, 0);
+                    abstractInsnNode = new IincInsnNode(0, 0);
                     break;
                 case AbstractInsnNode.TABLESWITCH_INSN:
-                    abstractInsnNode = new TableSwitchInsnNode(0, 0, OpcodeUtil.getFirstLabel(methodNode.instructions));
+                    LabelNode defaultLabel = OpcodeUtil.getFirstLabel(methodNode.instructions);
+                    abstractInsnNode = new TableSwitchInsnNode(0, 0, defaultLabel, defaultLabel);
                     break;
                 case AbstractInsnNode.LOOKUPSWITCH_INSN:
                     abstractInsnNode = new LookupSwitchInsnNode(OpcodeUtil.getFirstLabel(methodNode.instructions), new int[]{}, new LabelNode[]{});
@@ -225,12 +224,14 @@ public class MethodInstructionPanel extends JPanel {
             }
 
             MessageUtil.confirm(new InstructionEditPanel(abstractInsnNode), LangUtil.i18n("popup.instructions.edit"), () -> {
+                int anchorIndex = instructionDefaultListModel.indexOf(anchor);
+                if (anchorIndex < 0) return;
                 if (before) {
-                    methodNode.instructions.insertBefore(instructionJList.getSelectedValue().getWrapper(), abstractInsnNode);
+                    methodNode.instructions.insertBefore(anchor.getWrapper(), abstractInsnNode);
                 } else {
-                    methodNode.instructions.insert(instructionJList.getSelectedValue().getWrapper(), abstractInsnNode);
+                    methodNode.instructions.insert(anchor.getWrapper(), abstractInsnNode);
                 }
-                instructionDefaultListModel.add(instructionJList.getSelectedIndex() + (before ? 0 : 1), new InstructionWrapper(abstractInsnNode));
+                instructionDefaultListModel.add(anchorIndex + (before ? 0 : 1), new InstructionWrapper(abstractInsnNode));
             });
         });
     }

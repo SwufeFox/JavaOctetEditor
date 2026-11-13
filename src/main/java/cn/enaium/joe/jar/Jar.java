@@ -24,15 +24,22 @@ import java.util.*;
  * @author Enaium
  */
 public class Jar {
-    // internal name -> ClassNode
-    private Map<String, ClassNode> classes = new LinkedHashMap<>();
-    private Map<String, byte[]> resources = new LinkedHashMap<>();
+    // Internal names index base classes. Versioned class entries remain resources.
+    private final Map<String, ClassNode> classes = new LinkedHashMap<>();
+    private final Map<String, byte[]> resources = new LinkedHashMap<>();
+    private final Collection<ClassNode> classView = Collections.unmodifiableCollection(classes.values());
+    private final Map<String, byte[]> resourceView = Collections.unmodifiableMap(resources);
 
     /**
      * @param classNode the classNode
      */
     public void putClassNode(ClassNode classNode){
-        classes.put(classNode.getInternalName(), classNode);
+        Objects.requireNonNull(classNode, "classNode");
+        classes.put(Objects.requireNonNull(classNode.getInternalName(), "internalName"), classNode);
+    }
+
+    public ClassNode removeClass(String internalName) {
+        return classes.remove(internalName);
     }
 
     /**
@@ -55,7 +62,7 @@ public class Jar {
      * @return collection of ClassNodes
      */
     public Collection<ClassNode> getClasses(){
-        return classes.values();
+        return classView;
     }
 
     public int getClassSize() {
@@ -63,11 +70,10 @@ public class Jar {
     }
 
     /**
-     * @return the map of resources. path -> bytes
-     * e.g. "assets/lang/en_us.lang" -> null
+     * @return a read-only resource index, path -> bytes. Byte arrays remain editable.
      */
     public Map<String,byte[]> getResources() {
-        return resources;
+        return resourceView;
     }
 
     /**
@@ -75,11 +81,19 @@ public class Jar {
      * @param value the bytes, not null
      */
     public void putResource(String path, byte[] value) {
-        resources.put(path, value);
+        resources.put(Objects.requireNonNull(path, "path"), Objects.requireNonNull(value, "value"));
     }
 
     public void putAllResource(Map<String, byte[]> map) {
+        map.forEach((path, value) -> {
+            Objects.requireNonNull(path, "path");
+            Objects.requireNonNull(value, "value");
+        });
         resources.putAll(map);
+    }
+
+    public byte[] removeResource(String path) {
+        return resources.remove(path);
     }
 
     /**
@@ -94,18 +108,23 @@ public class Jar {
         return resources.size();
     }
 
+    /** Reindexes renamed classes, leaving the old index intact if names collide. */
     public void refresh(){
-        Collection<ClassNode> classNodes = getClasses();
-        this.classes = new LinkedHashMap<>(classNodes.size());
-        for (ClassNode classNode : classNodes) {
-            putClassNode(classNode);
+        Map<String, ClassNode> refreshed = new LinkedHashMap<>(classes.size());
+        for (ClassNode classNode : classes.values()) {
+            String name = Objects.requireNonNull(classNode.getInternalName(), "internalName");
+            if (refreshed.putIfAbsent(name, classNode) != null) {
+                throw new IllegalStateException("Classes have the same internal name: " + name);
+            }
         }
+        classes.clear();
+        classes.putAll(refreshed);
     }
 
     public Jar copy() {
         Jar jar = new Jar();
-        for (ClassNode classNode : this.classes.values()) {
-            jar.putClassNode(classNode.copy());
+        for (Map.Entry<String, ClassNode> entry : classes.entrySet()) {
+            jar.classes.put(entry.getKey(), entry.getValue().copy());
         }
         for (Map.Entry<String, byte[]> entry : resources.entrySet()) {
             jar.putResource(entry.getKey(), entry.getValue().clone());

@@ -18,12 +18,16 @@ package cn.enaium.joe.util.task.tasks;
 
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.service.DecompileService;
-import cn.enaium.joe.util.MessageUtil;
+import cn.enaium.joe.service.decompiler.IDecompiler;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.task.AbstractTask;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Map;
@@ -38,45 +42,54 @@ import java.util.zip.ZipOutputStream;
 public class SaveAllSourceTask extends AbstractTask<Boolean> {
     private final Jar jar;
     private final File out;
+    private final IDecompiler decompiler;
 
     public SaveAllSourceTask(Jar jar, File out) {
         super("SaveAllSource");
-        this.jar = jar;
+        this.jar = jar.copy();
+        this.decompiler = DecompileService.getService();
         this.out = out;
     }
 
     @Override
     public Boolean get() {
-        float loaded = 0;
-        float files = jar.getClassSize() + jar.getResourceSize();
+        int completed = 0;
+        int count = jar.getClassSize() + jar.getResourceSize();
+        Path destination = out.toPath().toAbsolutePath();
+        Path temporary = null;
         try {
-            ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(out.toPath()));
-
-            for (ClassNode value : jar.getClasses()) {
-                if (value.getOuterClassInternalName() != null) {
-                    setProgress((int) ((loaded++ / files) * 100f));
-                    continue;
+            temporary = Files.createTempFile(destination.getParent(), ".joe-source-", ".zip");
+            try (ZipOutputStream stream = new ZipOutputStream(Files.newOutputStream(temporary))) {
+                for (ClassNode node : jar.getClasses()) {
+                    setProgress(completed++ * 100 / Math.max(1, count));
+                    if (node.getOuterClassInternalName() != null || node.getNodeInternal().innerClasses.stream()
+                            .anyMatch(inner -> node.getInternalName().equals(inner.name) && inner.outerName != null)) continue;
+                    stream.putNextEntry(new ZipEntry("src/main/java/" + node.getInternalName() + ".java"));
+                    stream.write(decompiler.decompile(node).getBytes(StandardCharsets.UTF_8));
+                    stream.closeEntry();
                 }
-                String name = value.getInternalName() + ".java";
-                name = "src/main/java/" + name;
-                zipOutputStream.putNextEntry(new ZipEntry(name));
-                zipOutputStream.write(DecompileService.getService().decompile(value).getBytes(StandardCharsets.UTF_8));
-                setProgress((int) ((loaded++ / files) * 100f));
+                for (Map.Entry<String, byte[]> entry : jar.getResources().entrySet()) {
+                    setProgress(completed++ * 100 / Math.max(1, count));
+                    stream.putNextEntry(new ZipEntry("src/main/resources/" + entry.getKey()));
+                    stream.write(entry.getValue());
+                    stream.closeEntry();
+                }
             }
-
-            for (Map.Entry<String, byte[]> stringEntry : jar.getResources().entrySet()) {
-                String name = stringEntry.getKey();
-                name = "src/main/resources/" + name;
-                zipOutputStream.putNextEntry(new JarEntry(name));
-                zipOutputStream.write(stringEntry.getValue());
-                setProgress((int) ((loaded++ / files) * 100f));
+            setProgress(100);
+            try {
+                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
             }
-            zipOutputStream.closeEntry();
-            zipOutputStream.close();
-        } catch (IOException ex) {
-            MessageUtil.error(ex);
-            return false;
+            temporary = null;
+            return true;
+        } catch (IOException failure) {
+            throw new UncheckedIOException("Could not export sources to " + destination, failure);
+        } finally {
+            if (temporary != null) {
+                try { Files.deleteIfExists(temporary); }
+                catch (IOException failure) { temporary.toFile().deleteOnExit(); }
+            }
         }
-        return true;
     }
 }

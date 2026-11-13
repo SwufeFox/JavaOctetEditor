@@ -17,13 +17,16 @@
 package cn.enaium.joe.service;
 
 import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.service.decompiler.IDecompiler;
 import cn.enaium.joe.service.decompiler.VineFlowerDecompiler;
 import cn.enaium.joe.service.decompiler.CFRDecompiler;
 import cn.enaium.joe.service.decompiler.ProcyonDecompiler;
 
-import java.util.function.Supplier;
+import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * @author Enaium
@@ -36,18 +39,46 @@ public class DecompileService {
         Procyon(ProcyonDecompiler::new);
 
 
-        private final Supplier<IDecompiler> decompilerSupplier;
-        Service(Supplier<IDecompiler> supplier){
-            this.decompilerSupplier = supplier;
+        private final Function<Jar, IDecompiler> decompilerFactory;
+        Service(Function<Jar, IDecompiler> factory){
+            this.decompilerFactory = factory;
         }
 
-        public IDecompiler getDecompiler(){
-            return decompilerSupplier.get();
+        public IDecompiler getDecompiler(Jar archive){
+            return decompilerFactory.apply(archive);
+        }
+    }
+
+    /** Decompiles using only the supplied archive and backend defaults, without desktop initialization. */
+    public static String decompile(Jar archive, String internalName, Service backend) {
+        Objects.requireNonNull(archive, "Archive");
+        Objects.requireNonNull(backend, "Decompiler backend");
+        ClassNode node = archive.getClassNode(Objects.requireNonNull(internalName, "Class internal name"));
+        if (node == null) throw new IllegalArgumentException("Class not found in archive: " + internalName);
+        return invoke(backend.getDecompiler(archive), node, backend);
+    }
+
+    private static String invoke(IDecompiler decompiler, ClassNode node, Service backend) {
+        try {
+            String source = decompiler.decompile(node);
+            if (source == null || source.isBlank()) throw new IllegalStateException("The backend produced no source");
+            return source;
+        } catch (RuntimeException error) {
+            throw new IllegalStateException(backend + " could not decompile " + node.getInternalName() + ": " + error.getMessage(), error);
         }
     }
 
 
     public static IDecompiler getService() {
-        return JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).decompilerMode.getValue().getDecompiler();
+        JavaOctetEditor editor = JavaOctetEditor.getInstance();
+        if (editor == null || editor.getJar() == null) throw new IllegalStateException("Open an archive before decompiling");
+        Jar archive = editor.getJar();
+        Service backend = editor.CONFIG.getByClass(ApplicationConfig.class).decompilerMode.getValue();
+        IDecompiler decompiler = switch (backend) {
+            case VineFlower -> new VineFlowerDecompiler(archive, VineFlowerDecompiler.customProperties.getValue());
+            case CFR -> new CFRDecompiler(archive, CFRDecompiler.options.getValue());
+            case Procyon -> new ProcyonDecompiler(archive, ProcyonDecompiler.cachedFormattingOptions.getValue());
+        };
+        return node -> invoke(decompiler, node, backend);
     }
 }

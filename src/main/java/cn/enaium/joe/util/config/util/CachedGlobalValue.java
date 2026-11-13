@@ -6,7 +6,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class CachedGlobalValue<T> implements Consumer<Config> {
-    protected T value;
+    protected volatile T value;
     protected Function<Config, T> processor;
 
     public CachedGlobalValue(Function<Config, T> processor){

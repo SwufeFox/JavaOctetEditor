@@ -35,25 +35,29 @@ public final class ModeValue<T extends Enum<T>> extends Value<T>{
     private transient final Class<T> enumClass;
 
     public ModeValue(String name, T value, String description, EnumSet<T> mode) {
-        super(value.getClass(), name, value, description);
-        this.mode = mode;
-        this.enumClass = Util.cast(value.getClass());
+        super(value.getDeclaringClass(), name, value, description);
+        if (!mode.contains(value)) throw new IllegalArgumentException("Default must be an allowed mode");
+        this.mode = mode.clone();
+        this.enumClass = value.getDeclaringClass();
     }
 
     public EnumSet<T> getMode() {
-        return mode;
+        return mode.clone();
     }
 
     public void setMode(EnumSet<T> mode) {
-        this.mode = mode;
+        if (!mode.contains(getValue())) throw new IllegalArgumentException("Current value must remain an allowed mode");
+        this.mode = mode.clone();
     }
 
     @Override
     public void decode(JsonElement jsonElement) {
-        T enum_ = Enum.valueOf(enumClass, jsonElement.getAsString());
-        if (this.mode.contains(enum_)) {
-            this.setValue(enum_);
+        requirePrimitive(jsonElement, "string");
+        T decoded = Enum.valueOf(enumClass, jsonElement.getAsString());
+        if (!mode.contains(decoded)) {
+            throw new IllegalArgumentException("Mode is not allowed: " + decoded);
         }
+        this.setValue(decoded);
     }
 
     public static Component createGui(ModeValue<?> modeValue){

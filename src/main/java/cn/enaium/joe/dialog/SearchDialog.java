@@ -18,6 +18,11 @@ package cn.enaium.joe.dialog;
 
 import cn.enaium.joe.gui.component.ResultList;
 import cn.enaium.joe.util.LangUtil;
+import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.gui.panel.search.ResultNode;
+import cn.enaium.joe.util.task.AbstractTask;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import javax.swing.*;
 import java.awt.*;
@@ -27,11 +32,47 @@ import java.awt.*;
  */
 public class SearchDialog extends Dialog {
     public ResultList resultList = new ResultList();
+    private final JLabel status = new JLabel(LangUtil.i18n("search.ready"));
+    private CompletableFuture<?> search;
 
     public SearchDialog() {
         super(LangUtil.i18n("menu.search"));
         setLayout(new BorderLayout());
         setSize(700, 400);
         add(new JScrollPane(resultList), BorderLayout.CENTER);
+        add(status, BorderLayout.NORTH);
+    }
+
+    protected void runSearch(AbstractTask<List<ResultNode>> task) {
+        if (JavaOctetEditor.getInstance().getJar() == null) {
+            status.setText(LangUtil.i18n("workspace.open"));
+            return;
+        }
+        if (search != null && !search.isDone()) return;
+        var archive = JavaOctetEditor.getInstance().getJar();
+        var model = (DefaultListModel<ResultNode>) resultList.getModel();
+        model.clear();
+        status.setText(LangUtil.i18n("search.running"));
+        CompletableFuture<List<ResultNode>> submitted = JavaOctetEditor.getInstance().TASKS.submit(task);
+        search = submitted;
+        submitted.whenComplete((results, failure) -> {
+            if (search != submitted) return;
+            if (failure != null) {
+                status.setText(LangUtil.i18n(failure instanceof java.util.concurrent.CancellationException ? "search.cancelled" : "search.failed"));
+                return;
+            }
+            if (JavaOctetEditor.getInstance().getJar() != archive) {
+                status.setText(LangUtil.i18n("search.archiveChanged"));
+                return;
+            }
+            for (ResultNode result : results) model.addElement(result);
+            status.setText(LangUtil.i18n("search.results", results.size()));
+        });
+    }
+
+    @Override
+    public void dispose() {
+        if (search != null) search.cancel(true);
+        super.dispose();
     }
 }

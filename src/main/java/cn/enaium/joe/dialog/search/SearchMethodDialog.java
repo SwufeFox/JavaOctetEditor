@@ -64,14 +64,7 @@ public class SearchMethodDialog extends SearchDialog {
                     }
 
 
-                    JavaOctetEditor.getInstance().TASKS
-                            .submit(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText(), anInterface.isSelected()))
-                            .thenAccept(it -> {
-                                ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                                for (ResultNode resultNode : it) {
-                                    ((DefaultListModel<ResultNode>) resultList.getModel()).addElement(resultNode);
-                                }
-                            });
+                    runSearch(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText(), anInterface.isSelected()));
                 });
             }});
         }}, BorderLayout.SOUTH);
@@ -93,13 +86,6 @@ public class SearchMethodDialog extends SearchDialog {
         this.name.setText(fieldInsnNode.name);
         this.owner.setText(classNode.getInternalName());
         this.desc.setText(fieldInsnNode.desc);
-        JavaOctetEditor.getInstance().TASKS
-                .submit(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), desc.getText()))
-                .thenAccept(it -> {
-                    ((DefaultListModel<ResultNode>) resultList.getModel()).clear();
-                    for (ResultNode resultNode : it) {
-                        ((DefaultListModel<ResultNode>) resultList.getModel()).addElement(resultNode);
-                    }
-                });
+        runSearch(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), desc.getText()));
     }
 }

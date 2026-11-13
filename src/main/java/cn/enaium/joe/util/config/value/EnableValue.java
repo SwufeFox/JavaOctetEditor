@@ -32,6 +32,7 @@ public final class EnableValue extends Value<Boolean> {
 
     @Override
     public void decode(JsonElement jsonElement) {
+        requirePrimitive(jsonElement, "boolean");
         this.setValue(jsonElement.getAsBoolean());
     }
 

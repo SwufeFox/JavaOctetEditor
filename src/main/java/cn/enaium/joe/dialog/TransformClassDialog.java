@@ -35,7 +35,8 @@ import java.util.Set;
 
 public class TransformClassDialog extends Dialog {
     protected CodeAreaPanel codeAreaPanel = new CodeAreaPanel();
-    protected Button button;
+    protected javax.swing.JButton button;
+    private java.util.concurrent.CompletableFuture<?> transformation;
     public TransformClassDialog() {
         super(LangUtil.i18n("menu.attach.transform"));
         setLayout(new BorderLayout());
@@ -54,7 +55,7 @@ public class TransformClassDialog extends Dialog {
                         "    }\n" +
                         "}";
         codeAreaPanel.getTextArea().setText(stringBuilder);
-        add(button = new Button(LangUtil.i18n("button.edit")), BorderLayout.SOUTH);
+        add(button = new javax.swing.JButton(LangUtil.i18n("button.edit")), BorderLayout.SOUTH);
         AutoCompletion ac = new AutoCompletion(createCompletionProvider());
 
         ac.setAutoActivationEnabled(true);
@@ -63,30 +64,57 @@ public class TransformClassDialog extends Dialog {
         ac.setParameterAssistanceEnabled(true);
         ac.install(codeAreaPanel.getTextArea());
 
-        button.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                StringWriter errorTracer = new StringWriter();
-                byte[] dumpClazz = Compiler.compileSingle(className, codeAreaPanel.getTextArea().getText(), errorTracer);
-                if (dumpClazz == null) {
-                    MessageUtil.error(errorTracer.toString());
-                }
-                try {
-                    final IClassTransformer iClassTransformer = (IClassTransformer) new ASMClassLoader().defineClass(className, dumpClazz).getConstructor().newInstance();
-                    JavaOctetEditor.getInstance().getJar().getClasses()
-                            .forEach(classNode -> {
-                                if (iClassTransformer.transform(classNode.getNodeInternal())) {
-                                    classNode.mkdir();
-                                    EditSaveSuccessEvent.trigger(classNode.getInternalName());
-                                }
-                            });
-                } catch (InstantiationException | IllegalAccessException | InvocationTargetException |
-                         NoSuchMethodException ex) {
-                    MessageUtil.error("Error at transform", ex);
-                }
-                MessageUtil.info(LangUtil.i18n("success"));
+        button.addActionListener(event -> {
+            var app = JavaOctetEditor.getInstance();
+            var archive = app.getJar();
+            if (archive == null) {
+                MessageUtil.warning(LangUtil.i18n("workspace.open"));
+                return;
             }
+            String source = codeAreaPanel.getTextArea().getText();
+            var snapshot = archive.copy();
+            button.setEnabled(false);
+            var task = app.TASKS.submit(new cn.enaium.joe.util.task.AbstractTask<cn.enaium.joe.jar.Jar>("Transform classes") {
+                @Override
+                public cn.enaium.joe.jar.Jar get() {
+                    try {
+                        java.util.Map<String, byte[]> classPath = new java.util.LinkedHashMap<>();
+                        for (ClassNode node : snapshot.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
+                        var outputs = Compiler.compileSources(java.util.Map.of(className, source), classPath);
+                        ASMClassLoader loader = new ASMClassLoader();
+                        Class<?> type = loader.defineClass(className, outputs.get(className));
+                        for (var output : outputs.entrySet()) {
+                            if (!output.getKey().equals(className)) loader.defineClass(output.getKey(), output.getValue());
+                        }
+                        IClassTransformer transformer = (IClassTransformer) type.getConstructor().newInstance();
+                        int completed = 0;
+                        for (ClassNode node : snapshot.getClasses()) {
+                            setProgress(completed++ * 100 / Math.max(1, snapshot.getClassSize()));
+                            if (transformer.transform(node.getClassNode())) node.updateBytes();
+                        }
+                        snapshot.refresh();
+                        setProgress(100);
+                        return snapshot;
+                    } catch (ReflectiveOperationException | cn.enaium.joe.util.compiler.CompileError failure) {
+                        throw new java.util.concurrent.CompletionException(failure);
+                    }
+                }
+            });
+            transformation = task;
+            task.whenComplete((staged, failure) -> {
+                button.setEnabled(true);
+                if (failure != null || app.getJar() != archive || !isDisplayable()) return;
+                app.setJar(staged);
+                for (ClassNode node : staged.getClasses()) EditSaveSuccessEvent.trigger(node.getInternalName());
+                MessageUtil.info(LangUtil.i18n("source.saved"));
+            });
         });
+    }
+
+    @Override
+    public void dispose() {
+        if (transformation != null) transformation.cancel(true);
+        super.dispose();
     }
 
     private static CompletionProvider $provider = null;

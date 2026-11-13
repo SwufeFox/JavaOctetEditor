@@ -28,17 +28,35 @@ import java.net.URI;
  */
 public class VirtualJavaClassObject extends SimpleJavaFileObject {
 
-    private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    private final String binaryName;
+    private final ByteArrayOutputStream outputStream;
 
     private final byte[] content;
 
     public VirtualJavaClassObject(String className, byte[] content) {
         super(URI.create("string:///" + className.replace(".", "/") + Kind.CLASS.extension), Kind.CLASS);
         this.content = content;
+        this.binaryName = className;
+        this.outputStream = content == null ? new ByteArrayOutputStream() : null;
+    }
+
+    public String getBinaryName() {
+        return binaryName;
+    }
+
+    public byte[] getBytecode() {
+        return content == null ? outputStream.toByteArray() : content;
+    }
+
+    @Override
+    public ByteArrayOutputStream openOutputStream() {
+        if (outputStream == null) throw new IllegalStateException("Dependency bytecode is read-only");
+        outputStream.reset();
+        return outputStream;
     }
 
     @Override
     public InputStream openInputStream() {
-        return new ByteArrayInputStream(content);
+        return new ByteArrayInputStream(getBytecode());
     }
 }

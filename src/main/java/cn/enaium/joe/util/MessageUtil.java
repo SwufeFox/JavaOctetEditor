@@ -34,25 +34,26 @@ public class MessageUtil {
 
     public static void error(String readable) {
         Logger.error(readable);
-        JOptionPane.showMessageDialog(null, readable, LangUtil.i18n("error"), JOptionPane.ERROR_MESSAGE);
+        onEdt(() -> JOptionPane.showMessageDialog(null, readable, LangUtil.i18n("error"), JOptionPane.ERROR_MESSAGE));
     }
 
     public static void error(String readable, Throwable e) {
         Logger.error(readable, e);
-        JOptionPane.showMessageDialog(null, readable + e.toString(), LangUtil.i18n("error"), JOptionPane.ERROR_MESSAGE);
+        onEdt(() -> JOptionPane.showMessageDialog(null, readable + "\n" + e, LangUtil.i18n("error"), JOptionPane.ERROR_MESSAGE));
     }
 
     public static void error(Throwable e) {
-        e.printStackTrace();
-        new OptionDialog(LangUtil.i18n("error"), new BorderPanel() {{
-            setTop(new JLabel(e.getMessage()));
+        Logger.error(e);
+        onEdt(() -> new OptionDialog(LangUtil.i18n("error"), new BorderPanel() {{
+            setTop(new JLabel(e.getMessage() == null ? e.toString() : e.getMessage()));
             setCenter(new JScrollPane(new JTextArea() {{
                 StringWriter out = new StringWriter();
                 e.printStackTrace(new PrintWriter(out));
                 setText(out.toString());
                 setEditable(false);
+                setCaretPosition(0);
             }}));
-        }}, JOptionPane.ERROR_MESSAGE).setVisible(true);
+        }}, JOptionPane.ERROR_MESSAGE).setVisible(true));
     }
 
     public static RuntimeException runtimeException(String readable, Throwable e) {
@@ -66,8 +67,7 @@ public class MessageUtil {
     }
 
     public static void confirm(Object message, String title, Runnable yes, Runnable no) {
-        OptionDialog optionDialog = new OptionDialog(title, message, JOptionPane.INFORMATION_MESSAGE, yes, no);
-        optionDialog.setVisible(true);
+        onEdt(() -> new OptionDialog(title, message, JOptionPane.INFORMATION_MESSAGE, yes, no).setVisible(true));
     }
 
     public static void confirm(ConfirmPanel confirmPanel, String title) {
@@ -87,14 +87,18 @@ public class MessageUtil {
 
 
     public static void info(String message) {
-        OptionDialog info = new OptionDialog(LangUtil.i18n("info"), message, JOptionPane.INFORMATION_MESSAGE);
-        info.setVisible(true);
+        onEdt(() -> new OptionDialog(LangUtil.i18n("info"), message, JOptionPane.INFORMATION_MESSAGE).setVisible(true));
         Logger.info(message);
     }
 
     public static void warning(String message) {
-        OptionDialog warning = new OptionDialog(LangUtil.i18n("warning"), message, JOptionPane.WARNING_MESSAGE);
-        warning.setVisible(true);
+        onEdt(() -> new OptionDialog(LangUtil.i18n("warning"), message, JOptionPane.WARNING_MESSAGE).setVisible(true));
         Logger.warn(message);
+    }
+
+    private static void onEdt(Runnable action) {
+        if (GraphicsEnvironment.isHeadless()) return;
+        if (SwingUtilities.isEventDispatchThread()) action.run();
+        else SwingUtilities.invokeLater(action);
     }
 }

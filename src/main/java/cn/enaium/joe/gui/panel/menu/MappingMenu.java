@@ -47,8 +47,12 @@ public class MappingMenu extends JMenu {
                             return "Mapping file(*.txt,*.map,*.mapping,*.pro,*.srg)";
                         }
                     });
-                    if (JavaOctetEditor.getInstance().getJar() != null && show != null) {
-                        JavaOctetEditor.getInstance().TASKS.submit(new RemappingTask(show, value));
+                    var app = JavaOctetEditor.getInstance();
+                    var archive = app.getJar();
+                    if (archive != null && show != null) {
+                        app.TASKS.submit(new RemappingTask(archive, show, value)).thenAccept(staged -> {
+                            if (app.getJar() == archive) app.setJar(staged);
+                        });
                     }
                 });
             }});

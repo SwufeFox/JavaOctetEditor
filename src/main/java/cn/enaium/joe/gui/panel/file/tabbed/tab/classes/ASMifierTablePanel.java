@@ -19,7 +19,7 @@ package cn.enaium.joe.gui.panel.file.tabbed.tab.classes;
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.util.classes.ClassNode;
-import cn.enaium.joe.util.compiler.Compiler;
+import cn.enaium.joe.util.task.tasks.CompileVisitorTask;
 import cn.enaium.joe.util.event.events.EditSaveSuccessEvent;
 import cn.enaium.joe.gui.panel.CodeAreaPanel;
 import cn.enaium.joe.util.*;
@@ -38,6 +38,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * @author Enaium
@@ -45,33 +46,34 @@ import java.util.List;
 public class ASMifierTablePanel extends ClassNodeTabPanel {
     protected CodeAreaPanel codeAreaPanel;
     protected AutoCompletion autoCompletion;
+    private CompletableFuture<ClassNode> compilation;
+    private int generation;
     public ASMifierTablePanel(ClassNode classNode) {
         super(classNode);
         setLayout(new BorderLayout());
         CodeAreaPanel codeAreaPanel = this.codeAreaPanel = new CodeAreaPanel() {{
             KeyStrokeUtil.register(getTextArea(), JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).keymap.getValue().save.getValue(), () -> {
-                if (ClassTabPanel.classTabIndex == 2) {
-                    try {
-                        String className = "ASMifier" + Integer.toHexString(classNode.getInternalName().hashCode()) + Integer.toHexString(getTextArea().getText().hashCode());
-                        String stringBuilder =
-                                        "import org.objectweb.asm.*;" +
-                                        "public class " + className + " implements Opcodes {" +
-                                        "public static byte[] dump() throws Exception {" +
-                                             getTextArea().getText() +
-                                        "return classWriter.toByteArray();}} ";
-
-                        StringWriter errorTracer = new StringWriter();
-                        byte[] dumpClazz = Compiler.compileSingle(className, stringBuilder, errorTracer);
-                        if (dumpClazz == null) {
-                            MessageUtil.error(errorTracer.toString());
-                        }
-                        byte[] dumps = (byte[])new ASMClassLoader().defineClass(className, dumpClazz).getMethod("dump").invoke(null);
-                        classNode.accept(ClassNode.of(dumps));
-                        MessageUtil.info(LangUtil.i18n("success"));
-                        EditSaveSuccessEvent.trigger(classNode.getInternalName());
-                    } catch (Throwable e) {
-                        MessageUtil.error(e);
-                    }
+                if (isShowing() && ClassTabPanel.classTabIndex == 2 && (compilation == null || compilation.isDone())) {
+                    var app = JavaOctetEditor.getInstance();
+                    var archive = app.getJar();
+                    if (archive == null || archive.getClassNode(classNode.getInternalName()) != classNode) return;
+                    String className = "ASMifier" + Integer.toHexString(classNode.getInternalName().hashCode()) + Integer.toHexString(getTextArea().getText().hashCode());
+                    String source = "import org.objectweb.asm.*; public class " + className + " implements Opcodes {"
+                            + "public static byte[] dump() throws Exception {" + getTextArea().getText()
+                            + "return classWriter.toByteArray();}}";
+                    Map<String, byte[]> classPath = new LinkedHashMap<>();
+                    for (ClassNode node : archive.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
+                    getTextArea().setEditable(false);
+                    compilation = app.TASKS.submit(new CompileVisitorTask(className, source, classPath));
+                    compilation.whenComplete((staged, failure) -> {
+                        getTextArea().setEditable(true);
+                        if (failure != null || app.getJar() != archive || !isDisplayable()) return;
+                        String oldName = classNode.getInternalName();
+                        classNode.accept(staged);
+                        app.refreshJar();
+                        EditSaveSuccessEvent.trigger(oldName);
+                        MessageUtil.info(LangUtil.i18n("source.saved"));
+                    });
                 }
             });
         }};
@@ -98,11 +100,14 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
     }
 
     public void update(){
+        int request = ++generation;
+        ClassNode snapshot = getClassNode().copy();
         StringWriter stringWriter = new StringWriter();
 
         ASyncUtil.execute(() -> {
-            this.getClassNode().trace(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter)));
+            snapshot.trace(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter)));
         }, () -> {
+            if (request != generation) return;
             String trim = getMiddle(getMiddle(stringWriter.toString())).trim();
             codeAreaPanel.getTextArea().setText(trim.substring(0, trim.lastIndexOf("\n")));
             codeAreaPanel.getTextArea().setCaretPosition(0);
@@ -110,6 +115,13 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
             defaultCompletionProvider.clear();
             updateCompletionProvider(defaultCompletionProvider, codeAreaPanel.getTextArea().getText());
         });
+    }
+
+    @Override
+    public void removeNotify() {
+        generation++;
+        if (compilation != null) compilation.cancel(true);
+        super.removeNotify();
     }
 
     public String getMiddle(String s) {

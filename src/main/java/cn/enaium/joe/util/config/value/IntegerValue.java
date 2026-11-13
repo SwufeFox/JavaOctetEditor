@@ -32,7 +32,7 @@ public final class IntegerValue extends Value<Integer> {
 
     @Override
     public void decode(JsonElement jsonElement) {
-        this.setValue(jsonElement.getAsInt());
+        this.setValue(integer(jsonElement));
     }
 
     public static Component createGui(final IntegerValue integerValue){

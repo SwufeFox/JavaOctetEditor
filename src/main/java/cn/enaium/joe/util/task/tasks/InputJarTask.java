@@ -17,25 +17,20 @@
 package cn.enaium.joe.util.task.tasks;
 
 import cn.enaium.joe.JavaOctetEditor;
-import cn.enaium.joe.util.config.extend.ApplicationConfig;
+import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.IOUtil;
-import cn.enaium.joe.util.MessageUtil;
-import cn.enaium.joe.util.Util;
-import cn.enaium.joe.util.classes.ClassNode;
+import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.util.task.AbstractTask;
 import org.tinylog.Logger;
 
+import javax.swing.SwingUtilities;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 
 /**
  * @author Enaium
@@ -52,54 +47,46 @@ public class InputJarTask extends AbstractTask<Jar> {
     @Override
     public Jar get() {
         Logger.info("LOAD:{}", file.getAbsolutePath());
-        Jar jar = new Jar();
         try {
-            if (file.isFile()){
-                ZipFile jarFile = new ZipFile(file);
-                float loaded = 0;
-                float files = Util.countFiles(jarFile);
-
-
-                var entries = jarFile.entries();
-                while (entries.hasMoreElements()) {
-                    ZipEntry jarEntry = entries.nextElement();
-                    if (jarEntry.getName().endsWith(".class")) {
-                        jar.putClassNode(ClassNode.of(IOUtil.getBytes(jarFile.getInputStream(jarEntry))));
-                    } else if (!jarEntry.isDirectory()) {
-                        jar.putResource(jarEntry.getName(), IOUtil.getBytes(jarFile.getInputStream(jarEntry)));
-                    }
-                    setProgress((int) ((loaded++ / files) * 100f));
-                }
-                jarFile.close();
-            } else {
-                Path root = file.toPath();
-                try (Stream<Path> walkStream = Files.walk(root)){
-                    Iterator<Path> itr = walkStream.filter(Files::isReadable).iterator();
-                    List<Path> paths = new LinkedList<>();
-                    while (itr.hasNext()) {
-                        paths.add(itr.next());
-                    }
-                    float loaded = 0;
-                    float files = paths.size();
-                    for (Path path : paths) {
-                        String relative = root.relativize(path).toString();
-                        if (relative.endsWith(".class")) {
-                            jar.putClassNode(ClassNode.of(IOUtil.getBytes(Files.newInputStream(path))));
-                        } else if (!Files.isDirectory(path)) {
-                            jar.putResource(relative, IOUtil.getBytes(Files.newInputStream(path)));
-                        }
-                        setProgress((int) ((loaded++ / files) * 100f));
-                    }
-                }
-            }
-        } catch (IOException e) {
-            MessageUtil.error("Could not input jar!", e);
-            return null;
+            Jar jar = ArchiveIO.read(file.toPath(), this::setProgress);
+            publish(jar);
+            return jar;
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not input archive: " + file, exception);
         }
+    }
 
-        JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue().add(file.getAbsolutePath());
-        JavaOctetEditor.getInstance().setJar(jar);
-        JavaOctetEditor.getInstance().window.setTitle(JavaOctetEditor.TITLE + "-" + file.getName());
-        return jar;
+    private void publish(Jar jar) throws IOException {
+        Thread worker = Thread.currentThread();
+        Runnable update = () -> {
+            if (worker.isInterrupted()) throw new CancellationException("Archive input interrupted");
+            JavaOctetEditor editor = JavaOctetEditor.getInstance();
+            editor.setJar(jar);
+            var recent = editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue();
+            String path = file.getAbsolutePath();
+            recent.remove(path);
+            recent.add(path);
+            editor.window.setTitle(JavaOctetEditor.TITLE + "-" + file.getName());
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            update.run();
+            return;
+        }
+        FutureTask<Void> publication = new FutureTask<>(update, null);
+        SwingUtilities.invokeLater(publication);
+        try {
+            publication.get();
+        } catch (InterruptedException exception) {
+            publication.cancel(false);
+            worker.interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Archive input interrupted before publication");
+            interrupted.initCause(exception);
+            throw interrupted;
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException failure) throw failure;
+            if (cause instanceof Error failure) throw failure;
+            throw new IOException("Could not publish archive", cause);
+        }
     }
 }

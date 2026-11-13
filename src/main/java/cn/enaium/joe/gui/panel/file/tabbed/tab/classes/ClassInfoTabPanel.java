@@ -43,10 +43,10 @@ public class ClassInfoTabPanel extends ClassNodeTabPanel {
         JTextField name = this.name = new JTextField(classNode.getInternalName());
         add(name, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.sourceFile")));
-        JTextField sourceFile = this.sourceFile = new JTextField(classNode.getClassNode().sourceFile);
+        JTextField sourceFile = this.sourceFile = new JTextField(classNode.getNodeInternal().sourceFile);
         add(sourceFile, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.debugFile")));
-        JTextField sourceDebug = this.debugFile = new JTextField(classNode.getClassNode().sourceDebug);
+        JTextField sourceDebug = this.debugFile = new JTextField(classNode.getNodeInternal().sourceDebug);
         add(sourceDebug, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.access")));
         JTextField access = this.access = new JTextField(String.valueOf(classNode.getAccess()));
@@ -55,7 +55,7 @@ public class ClassInfoTabPanel extends ClassNodeTabPanel {
         JTextField version = this.version = new JTextField(String.valueOf(classNode.getVersion()));
         add(version, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.signature")));
-        JTextField signature = this.signature = new JTextField(classNode.getClassNode().signature);
+        JTextField signature = this.signature = new JTextField(classNode.getNodeInternal().signature);
         add(signature, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.superName")));
         JTextField superName = this.superName = new JTextField(classNode.getSuperClass());
@@ -64,13 +64,13 @@ public class ClassInfoTabPanel extends ClassNodeTabPanel {
         JTextField interfaces = this.interfaces =  new JTextField(StringUtils.join(classNode.getInterfaces(), ";"));
         add(interfaces, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.outerClass")));
-        JTextField outerClass = this.outerClass = new JTextField(classNode.getClassNode().outerClass);
+        JTextField outerClass = this.outerClass = new JTextField(classNode.getNodeInternal().outerClass);
         add(outerClass, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.outerMethod")));
-        JTextField outerMethod = this.outerMethod = new JTextField(classNode.getClassNode().outerMethod);
+        JTextField outerMethod = this.outerMethod = new JTextField(classNode.getNodeInternal().outerMethod);
         add(outerMethod, "wrap");
         add(new JLabel(LangUtil.i18n("class.info.outerMethodDescription")));
-        JTextField outerMethodDesc = this.outerMethodDescription = new JTextField(classNode.getClassNode().outerMethodDesc);
+        JTextField outerMethodDesc = this.outerMethodDescription = new JTextField(classNode.getNodeInternal().outerMethodDesc);
         add(outerMethodDesc, "wrap");
         add(new JLabel("Visible Annotation:"));
         add(new JButton(LangUtil.i18n("button.edit")) {{
@@ -91,77 +91,60 @@ public class ClassInfoTabPanel extends ClassNodeTabPanel {
         add(new JButton(LangUtil.i18n("button.save")) {{
             addActionListener(e -> {
 
-                if (!StringUtil.isBlank(name.getText())) {
-                    classNode.getClassNode().name = name.getText();
+                try {
+                    ClassNode staged = classNode.copy();
+                    var node = staged.getClassNode();
+                    String oldName = classNode.getInternalName();
+                    if (!StringUtil.isBlank(name.getText())) node.name = name.getText().trim();
+                    var app = cn.enaium.joe.JavaOctetEditor.getInstance();
+                    var archive = app.getJar();
+                    if (archive == null || archive.getClassNode(oldName) != classNode) return;
+                    if (!node.name.equals(oldName) && archive.hasClass(node.name)) {
+                        throw new IllegalArgumentException(LangUtil.i18n("class.info.nameInUse", node.name));
+                    }
+                    node.sourceFile = nullable(sourceFile.getText());
+                    node.sourceDebug = nullable(sourceDebug.getText());
+                    if (!StringUtil.isBlank(access.getText())) node.access = Integer.parseInt(access.getText().trim());
+                    if (!StringUtil.isBlank(version.getText())) node.version = Integer.parseInt(version.getText().trim());
+                    node.signature = nullable(signature.getText());
+                    node.superName = nullable(superName.getText());
+                    node.interfaces = new ArrayList<>();
+                    if (!StringUtil.isBlank(interfaces.getText())) {
+                        for (String value : interfaces.getText().split(";")) {
+                            if (!value.isBlank()) node.interfaces.add(value.trim());
+                        }
+                    }
+                    node.outerClass = nullable(outerClass.getText());
+                    node.outerMethod = nullable(outerMethod.getText());
+                    node.outerMethodDesc = nullable(outerMethodDesc.getText());
+                    staged.updateBytes();
+                    classNode.accept(staged);
+                    app.refreshJar();
+                    EditSaveSuccessEvent.trigger(oldName);
+                    cn.enaium.joe.util.MessageUtil.info(LangUtil.i18n("source.saved"));
+                } catch (RuntimeException failure) {
+                    cn.enaium.joe.util.MessageUtil.error(failure);
                 }
-
-                if (!StringUtil.isBlank(sourceFile.getText())) {
-                    classNode.getClassNode().sourceFile = sourceFile.getText();
-                } else {
-                    classNode.getClassNode().sourceFile = null;
-                }
-
-                if (!StringUtil.isBlank(sourceDebug.getText())) {
-                    classNode.getClassNode().sourceDebug = sourceDebug.getText();
-                } else {
-                    classNode.getClassNode().sourceDebug = null;
-                }
-
-                if (!StringUtil.isBlank(access.getText())) {
-                    classNode.getClassNode().access = Integer.parseInt(access.getText());
-                }
-
-                if (!StringUtil.isBlank(version.getText())) {
-                    classNode.getClassNode().version = Integer.parseInt(version.getText());
-                }
-
-                if (!StringUtil.isBlank(signature.getText())) {
-                    classNode.getClassNode().signature = signature.getText();
-                } else {
-                    classNode.getClassNode().signature = null;
-                }
-
-                if (!StringUtil.isBlank(interfaces.getText())) {
-                    classNode.getClassNode().interfaces = Arrays.asList(superName.getText().split(";"));
-                } else {
-                    classNode.getClassNode().interfaces = new ArrayList<>();
-                }
-
-                if (!StringUtil.isBlank(outerClass.getText())) {
-                    classNode.getClassNode().outerClass = outerClass.getText();
-                } else {
-                    classNode.getClassNode().outerClass = null;
-                }
-
-                if (!StringUtil.isBlank(outerMethod.getText())) {
-                    classNode.getClassNode().outerMethod = outerMethod.getText();
-                } else {
-                    classNode.getClassNode().outerClass = null;
-                }
-
-                if (!StringUtil.isBlank(outerMethodDesc.getText())) {
-                    classNode.getClassNode().outerMethodDesc = outerMethodDesc.getText();
-                } else {
-                    classNode.getClassNode().outerClass = null;
-                }
-
-                JOptionPane.showMessageDialog(ClassInfoTabPanel.this, LangUtil.i18n("success"));
-                EditSaveSuccessEvent.trigger(classNode.getInternalName());
             });
         }}, "span 2");
     }
 
+    private static String nullable(String value) {
+        return StringUtil.isBlank(value) ? null : value;
+    }
+
     public void update(){
         this.name.setText(this.getClassNode().getInternalName());
-        this.superName.setText(this.getClassNode().getClassNode().superName);
-        this.debugFile.setText(this.getClassNode().getClassNode().sourceDebug);
-        this.sourceFile.setText(this.getClassNode().getClassNode().sourceFile);
-        this.signature.setText(this.getClassNode().getClassNode().signature);
-        this.outerClass.setText(this.getClassNode().getClassNode().outerClass);
-        this.outerMethod.setText(this.getClassNode().getClassNode().outerMethod);
-        this.outerMethodDescription.setText(this.getClassNode().getClassNode().outerMethodDesc);
-        this.access.setText(String.valueOf(this.getClassNode().getClassNode().access));
-        this.interfaces.setText(StringUtils.join(this.getClassNode().getClassNode().interfaces, ";"));
-        this.version.setText(String.valueOf(this.getClassNode().getClassNode().version));
+        var node = getClassNode().getNodeInternal();
+        this.superName.setText(node.superName);
+        this.debugFile.setText(node.sourceDebug);
+        this.sourceFile.setText(node.sourceFile);
+        this.signature.setText(node.signature);
+        this.outerClass.setText(node.outerClass);
+        this.outerMethod.setText(node.outerMethod);
+        this.outerMethodDescription.setText(node.outerMethodDesc);
+        this.access.setText(String.valueOf(node.access));
+        this.interfaces.setText(StringUtils.join(node.interfaces, ";"));
+        this.version.setText(String.valueOf(node.version));
     }
 }

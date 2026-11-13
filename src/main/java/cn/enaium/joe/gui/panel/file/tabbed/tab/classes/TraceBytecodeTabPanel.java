@@ -24,13 +24,13 @@ import org.objectweb.asm.util.TraceClassVisitor;
 import java.awt.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.nio.charset.StandardCharsets;
 
 /**
  * @author Enaium
  */
 public class TraceBytecodeTabPanel extends ClassNodeTabPanel {
     protected CodeAreaPanel codeAreaPanel;
+    private int generation;
     public TraceBytecodeTabPanel(ClassNode classNode) {
         super(classNode);
         setLayout(new BorderLayout());
@@ -42,12 +42,21 @@ public class TraceBytecodeTabPanel extends ClassNodeTabPanel {
     }
 
     public void update(){
+        int request = ++generation;
+        ClassNode snapshot = getClassNode().copy();
         final StringWriter stringWriter = new StringWriter();
         ASyncUtil.execute(() -> {
-            this.getClassNode().trace(new TraceClassVisitor(new PrintWriter(stringWriter)));
+            snapshot.trace(new TraceClassVisitor(new PrintWriter(stringWriter)));
         }, () -> {
-            codeAreaPanel.getTextArea().setText(new String(stringWriter.toString().getBytes(StandardCharsets.UTF_8)));
+            if (request != generation) return;
+            codeAreaPanel.getTextArea().setText(stringWriter.toString());
             codeAreaPanel.getTextArea().setCaretPosition(0);
         });
+    }
+
+    @Override
+    public void removeNotify() {
+        generation++;
+        super.removeNotify();
     }
 }

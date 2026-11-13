@@ -17,7 +17,7 @@
 package cn.enaium.joe.gui.panel.popup;
 
 import cn.enaium.joe.JavaOctetEditor;
-import com.formdev.flatlaf.extras.FlatSVGIcon;
+import cn.enaium.joe.util.LangUtil;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -38,14 +38,9 @@ public abstract class AbstractPopup extends JPanel {
             setBorder(new EmptyBorder(5, 5, 5, 5));
             setBackground(new JButton().getBackground());
             add(new JLabel(name), BorderLayout.CENTER);
-            add(new JLabel(new FlatSVGIcon("icons/minimize.svg") {{
-                addMouseListener(new MouseAdapter() {
-                    @Override
-                    public void mouseClicked(MouseEvent e) {
-                        destroy();
-                    }
-                });
-            }}), BorderLayout.EAST);
+            JButton close = new JButton(LangUtil.i18n("button.close"));
+            close.addActionListener(event -> destroy());
+            add(close, BorderLayout.EAST);
 
         }}, BorderLayout.NORTH);
     }

@@ -29,6 +29,7 @@ import java.awt.*;
 public class MethodDialog extends Dialog {
     public MethodDialog(ClassNode classNode, MethodNode methodNode) {
         super(classNode.getInternalName() + "#" + methodNode.name);
+        classNode.getClassNode();
         setLayout(new BorderLayout());
         add(new MethodTabPanel(methodNode), BorderLayout.CENTER);
     }

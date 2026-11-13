@@ -3,7 +3,6 @@ package cn.enaium.joe.util.config.value;
 import cn.enaium.joe.util.config.Config;
 import cn.enaium.joe.util.config.ConfigManager;
 import cn.enaium.joe.dialog.ConfigDialog;
-import cn.enaium.joe.util.MessageUtil;
 import com.google.gson.JsonElement;
 
 import javax.swing.*;
@@ -18,11 +17,10 @@ public final class ConfigValue<T extends Config> extends Value<T>{
 
     @Override
     public void decode(JsonElement jsonElement) {
-        if (jsonElement.isJsonObject()) {
-            ConfigManager.decodeConfig(this.getValue(), jsonElement.getAsJsonObject());
-        } else {
-            MessageUtil.error("Could Not decode config for " + jsonElement + " as " + this.getName() + "@" + this.getType().getTypeName());
+        if (jsonElement == null || !jsonElement.isJsonObject()) {
+            throw new IllegalArgumentException("Expected nested settings object for " + getName());
         }
+        ConfigManager.decodeConfig(getValue(), jsonElement.getAsJsonObject());
     }
 
     public static Component createGui(ConfigValue<?> configValue){

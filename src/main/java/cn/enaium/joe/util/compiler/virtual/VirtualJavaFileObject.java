@@ -17,8 +17,6 @@
 package cn.enaium.joe.util.compiler.virtual;
 
 import javax.tools.SimpleJavaFileObject;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.net.URI;
 
 /**
@@ -27,8 +25,6 @@ import java.net.URI;
  */
 public class VirtualJavaFileObject extends SimpleJavaFileObject {
 
-    private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-
     private final String content;
 
     public VirtualJavaFileObject(String className, String content) {
@@ -36,17 +32,9 @@ public class VirtualJavaFileObject extends SimpleJavaFileObject {
         this.content = content;
     }
 
-    public byte[] getBytecode() {
-        return outputStream.toByteArray();
-    }
 
     @Override
-    public ByteArrayOutputStream openOutputStream() {
-        return outputStream;
-    }
-
-    @Override
-    public CharSequence getCharContent(boolean ignoreEncodingErrors) throws IOException {
+    public CharSequence getCharContent(boolean ignoreEncodingErrors) {
         return content;
     }
 }

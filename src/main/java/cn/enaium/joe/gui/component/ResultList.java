@@ -47,13 +47,14 @@ public class ResultList extends JList<ResultNode> {
             add(comp, BorderLayout.CENTER);
         }});
         JPopupMenu jPopupMenu = new JPopupMenu();
-        JMenuItem jMenuItem = new JMenuItem("Jump to Node");
+        JMenuItem jMenuItem = new JMenuItem(cn.enaium.joe.util.LangUtil.i18n("popup.result.jump"));
         jMenuItem.addActionListener(e -> {
-            if (getSelectedValue() != null) {
+            ResultNode selected = getSelectedValue();
+            if (selected != null && selected.getClassNode() != null) {
                 SwingUtilities.invokeLater(() -> {
                     FileTree fileTree = JavaOctetEditor.getInstance().fileTree;
                     DefaultTreeModel model = (DefaultTreeModel) fileTree.getModel();
-                    if (selectEntry(fileTree, getSelectedValue().getClassNode(), model, FileTree.classesRoot)) {
+                    if (selectEntry(fileTree, selected.getClassNode(), model, FileTree.classesRoot)) {
                         fileTree.addTab();
                         fileTree.repaint();
                     }
