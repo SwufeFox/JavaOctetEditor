@@ -20,7 +20,6 @@ import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.tool.ToolApplication;
 import cn.enaium.joe.util.*;
 import cn.enaium.joe.util.classes.ClassNode;
-import cn.enaium.joe.util.task.tasks.InputJarTask;
 import org.tinylog.Logger;
 
 import javax.swing.*;
@@ -99,7 +98,7 @@ public final class Main {
                 editor.setJar(initial);
             }
             if (input != null) {
-                editor.TASKS.submit(new InputJarTask(input));
+                editor.requestOpenArchive(input);
             }
         });
     }

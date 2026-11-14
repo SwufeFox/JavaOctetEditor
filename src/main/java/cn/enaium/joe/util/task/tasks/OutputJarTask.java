@@ -17,6 +17,7 @@
 package cn.enaium.joe.util.task.tasks;
 
 import cn.enaium.joe.jar.ArchiveIO;
+import cn.enaium.joe.jar.ArchiveSnapshot;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.task.AbstractTask;
 
@@ -29,19 +30,25 @@ import java.io.UncheckedIOException;
  * @since 0.10.0
  */
 public class OutputJarTask extends AbstractTask<Boolean> {
-    private final Jar jar;
+    private final ArchiveSnapshot snapshot;
     private final File out;
+    private final boolean overwrite;
 
     public OutputJarTask(Jar jar, File out) {
+        this(ArchiveSnapshot.capture(jar), out, false);
+    }
+
+    public OutputJarTask(ArchiveSnapshot snapshot, File out, boolean overwrite) {
         super("OutputJar");
-        this.jar = cn.enaium.joe.jar.ArchiveSnapshot.capture(jar).toJar();
+        this.snapshot = snapshot;
         this.out = out;
+        this.overwrite = overwrite;
     }
 
     @Override
     public Boolean get() {
         try {
-            ArchiveIO.write(jar, out.toPath(), this::setProgress);
+            ArchiveIO.write(snapshot, out.toPath(), overwrite, this::setProgress);
             return true;
         } catch (IOException exception) {
             throw new UncheckedIOException("Could not export archive: " + out, exception);

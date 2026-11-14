@@ -16,6 +16,8 @@
 
 package cn.enaium.joe.gui.panel.menu;
 
+import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.gui.EntryActions;
 import cn.enaium.joe.gui.panel.menu.file.LoadMenuItem;
 import cn.enaium.joe.gui.panel.menu.file.LoadRecentMenu;
 import cn.enaium.joe.gui.panel.menu.file.SaveAllSourceMenuItem;
@@ -33,6 +35,10 @@ public class FileMenu extends JMenu {
         add(new LoadMenuItem());
         add(new LoadRecentMenu());
         add(new SaveMenuItem());
+        add(new JMenuItem(LangUtil.i18n("document.applySelected")) {{
+            addActionListener(event -> JavaOctetEditor.getInstance().fileTabbedPanel.saveSelectedDrafts());
+        }});
+        add(EntryActions.createAddResourceItem());
         add(new JSeparator());
         add(new SaveAllSourceMenuItem());
     }

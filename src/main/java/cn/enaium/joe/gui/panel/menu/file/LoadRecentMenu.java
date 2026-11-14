@@ -18,7 +18,6 @@ package cn.enaium.joe.gui.panel.menu.file;
 
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.util.config.extend.ApplicationConfig;
-import cn.enaium.joe.util.task.tasks.InputJarTask;
 import cn.enaium.joe.util.LangUtil;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 
@@ -43,14 +42,7 @@ public class LoadRecentMenu extends JMenu {
                 for (String s : loadRecent) {
                     add(new JMenuItem(s) {{
                         setIcon(new FlatSVGIcon("icons/jar.svg"));
-                        addActionListener(e -> {
-                            File file = new File(s);
-                            if (file.exists()) {
-                                JavaOctetEditor.getInstance().TASKS.submit(new InputJarTask(file));
-                            } else {
-                                loadRecent.remove(s);
-                            }
-                        });
+                        addActionListener(e -> JavaOctetEditor.getInstance().requestOpenArchive(new File(s)));
                     }});
                 }
             }

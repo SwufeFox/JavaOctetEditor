@@ -42,19 +42,25 @@ public class JFileChooserUtil {
     }
 
     public static File show(Type type, FileFilter fileFilter, int mode) {
+        return show(type, fileFilter, mode, null);
+    }
+
+    public static File show(Type type, FileFilter fileFilter, int mode, File suggested) {
         JFileChooser jFileChooser = new JFileChooser();
         jFileChooser.setCurrentDirectory(FileSystemView.getFileSystemView().getHomeDirectory());
         jFileChooser.setFileSelectionMode(mode);
         jFileChooser.removeChoosableFileFilter(jFileChooser.getAcceptAllFileFilter());
         jFileChooser.addChoosableFileFilter(fileFilter);
-
-        if (type.equals(Type.OPEN)) {
-            jFileChooser.showOpenDialog(JavaOctetEditor.getInstance().window);
-        } else if (type.equals(Type.SAVE)) {
-            jFileChooser.showSaveDialog(JavaOctetEditor.getInstance().window);
+        if (suggested != null) {
+            File parent = suggested.getAbsoluteFile().getParentFile();
+            if (parent != null) jFileChooser.setCurrentDirectory(parent);
+            jFileChooser.setSelectedFile(suggested);
         }
 
-        return jFileChooser.getSelectedFile();
+        int result = type == Type.OPEN
+                ? jFileChooser.showOpenDialog(JavaOctetEditor.getInstance().window)
+                : jFileChooser.showSaveDialog(JavaOctetEditor.getInstance().window);
+        return result == JFileChooser.APPROVE_OPTION ? jFileChooser.getSelectedFile() : null;
     }
 
     public enum Type {

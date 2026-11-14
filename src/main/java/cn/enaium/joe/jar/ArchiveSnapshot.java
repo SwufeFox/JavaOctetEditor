@@ -100,10 +100,14 @@ public final class ArchiveSnapshot {
         }
     }
 
-    // Trusted compilation code in this package reads these bytes without another
+    // Trusted archive services in this package read these bytes without another
     // full archive copy. No mutable byte arrays escape through the public API.
     Map<String, byte[]> classBytes() {
         return classes;
+    }
+
+    Map<String, byte[]> resourceBytes() {
+        return resources;
     }
 
     boolean belongsToSource(String name, java.util.Set<String> sources) {

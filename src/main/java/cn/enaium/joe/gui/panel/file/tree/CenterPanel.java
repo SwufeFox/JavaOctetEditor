@@ -25,7 +25,6 @@ import cn.enaium.joe.gui.panel.menu.file.LoadMenuItem;
 import cn.enaium.joe.gui.panel.menu.file.SaveMenuItem;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.mapping.MappingParser;
-import cn.enaium.joe.util.task.tasks.InputJarTask;
 import cn.enaium.joe.util.task.tasks.RemappingTask;
 import net.fabricmc.mappingio.format.MappingFormat;
 
@@ -101,11 +100,11 @@ public class CenterPanel extends BorderPanel {
                 if (!files.isEmpty()) {
                     File file = files.getFirst();
                     if (file.isDirectory()) {
-                        JavaOctetEditor.getInstance().TASKS.submit(new InputJarTask(file));
+                        JavaOctetEditor.getInstance().requestOpenArchive(file);
                     } else {
                         String name = file.getName().toLowerCase();
                         if (name.endsWith(".jar") || name.endsWith(".zip") || name.endsWith(".class")){
-                            JavaOctetEditor.getInstance().TASKS.submit(new InputJarTask(file));
+                            JavaOctetEditor.getInstance().requestOpenArchive(file);
                         } else {
                             MappingFormat mappingFormat = MappingParser.isAnyMatched(name);
                             if (mappingFormat != null && JavaOctetEditor.getInstance().getJar() != null) {

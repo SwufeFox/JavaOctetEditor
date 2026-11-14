@@ -180,16 +180,43 @@ public final class ArchiveIO {
      */
     public static void write(Jar archive, Path output, boolean overwrite, IntConsumer progress) throws IOException {
         Objects.requireNonNull(archive, "archive");
+        Path destination = prepareOutput(output, progress);
+        writeEntries(outputEntries(archive), destination, overwrite, progress);
+    }
+
+    public static void write(ArchiveSnapshot snapshot, Path output, IntConsumer progress) throws IOException {
+        write(snapshot, output, true, progress);
+    }
+
+    /** Writes captured bytes directly, without rebuilding or serializing ASM trees. */
+    public static void write(ArchiveSnapshot snapshot, Path output, boolean overwrite, IntConsumer progress) throws IOException {
+        Objects.requireNonNull(snapshot, "snapshot");
+        Path destination = prepareOutput(output, progress);
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        EntryNames names = new EntryNames();
+        for (Map.Entry<String, byte[]> entry : snapshot.classBytes().entrySet()) {
+            checkInterrupted();
+            entries.put(names.add(classEntryName(entry.getKey())), entry.getValue());
+        }
+        addResources(entries, names, snapshot.resourceBytes());
+        writeEntries(entries, destination, overwrite, progress);
+    }
+
+    private static Path prepareOutput(Path output, IntConsumer progress) throws IOException {
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(progress, "progress");
         checkInterrupted();
         progress.accept(0);
         Path destination = output.toAbsolutePath().normalize();
-        Path parent = destination.getParent();
-        if (parent == null || Files.isDirectory(destination)) {
+        if (destination.getParent() == null || Files.isDirectory(destination)) {
             throw new IOException("Output must be a file: " + destination);
         }
-        Map<String, byte[]> entries = outputEntries(archive);
+        return destination;
+    }
+
+    private static void writeEntries(Map<String, byte[]> entries, Path destination, boolean overwrite,
+                                     IntConsumer progress) throws IOException {
+        Path parent = destination.getParent();
         checkInterrupted();
         Path temporary = Files.createTempFile(parent, ".joe-", ".tmp");
         try {
@@ -245,7 +272,13 @@ public final class ArchiveIO {
                 throw new IOException("Could not serialize class: " + name, exception);
             }
         }
-        for (Map.Entry<String, byte[]> entry : archive.getResources().entrySet()) {
+        addResources(entries, names, archive.getResources());
+        return entries;
+    }
+
+    private static void addResources(Map<String, byte[]> entries, EntryNames names,
+                                     Map<String, byte[]> resources) throws IOException {
+        for (Map.Entry<String, byte[]> entry : resources.entrySet()) {
             checkInterrupted();
             String name = names.add(entry.getKey());
             byte[] bytes = entry.getValue();
@@ -254,11 +287,13 @@ public final class ArchiveIO {
             }
             entries.put(name, bytes);
         }
-        return entries;
     }
 
     private static String classEntryName(ClassNode node) throws IOException {
-        String internalName = node.getInternalName();
+        return classEntryName(node.getInternalName());
+    }
+
+    private static String classEntryName(String internalName) throws IOException {
         if (internalName == null || internalName.isEmpty() || internalName.endsWith("/")
                 || internalName.indexOf('.') >= 0 || internalName.indexOf(';') >= 0
                 || internalName.indexOf('[') >= 0 || internalName.indexOf('\\') >= 0) {

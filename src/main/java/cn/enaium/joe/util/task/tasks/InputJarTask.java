@@ -19,13 +19,13 @@ package cn.enaium.joe.util.task.tasks;
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.util.task.AbstractTask;
 import org.tinylog.Logger;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.function.BooleanSupplier;
 
 /**
  * @author Enaium
@@ -36,12 +36,14 @@ public class InputJarTask extends AbstractTask<Jar> {
     private final File file;
     private final JavaOctetEditor editor;
     private final long request;
+    private final BooleanSupplier publicationAllowed;
 
-    public InputJarTask(File file) {
+    public InputJarTask(File file, long request, BooleanSupplier publicationAllowed) {
         super("InputJar");
         this.file = file;
         this.editor = JavaOctetEditor.getInstance();
-        this.request = editor.beginArchiveLoad();
+        this.request = request;
+        this.publicationAllowed = publicationAllowed;
     }
 
     @Override
@@ -59,11 +61,10 @@ public class InputJarTask extends AbstractTask<Jar> {
         if (!editor.isArchiveLoadCurrent(request)) {
             throw new java.util.concurrent.CancellationException("A newer archive load replaced this request");
         }
-        editor.setJar(jar);
-        var recent = editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue();
-        String path = file.getAbsolutePath();
-        recent.remove(path);
-        recent.add(path);
-        if (editor.window != null) editor.window.setTitle(JavaOctetEditor.TITLE + "-" + file.getName());
+        if (!publicationAllowed.getAsBoolean()) {
+            editor.notifyStatus(cn.enaium.joe.util.LangUtil.i18n("document.loadChanged"));
+            throw new java.util.concurrent.CancellationException("The document changed while the archive was loading");
+        }
+        editor.acceptArchiveLoad(file, jar);
     }
 }

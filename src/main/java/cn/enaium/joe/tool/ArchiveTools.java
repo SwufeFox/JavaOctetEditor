@@ -158,6 +158,10 @@ public final class ArchiveTools implements AutoCloseable {
         add(tools, "list_resources", "List resource paths and sizes with deterministic pagination.",
                 archive(List.of(), "query", text("Optional case-sensitive path substring", 0),
                         "offset", integer(0, Integer.MAX_VALUE), "limit", integer(1, 500)), true, false, true);
+        add(tools, "find_entries", "Find class and resource files by ranked, case-insensitive name/path search. Supports dotted class names, whitespace-separated terms and abbreviated names. Returns exact entry paths with stable pagination; does not execute archive code.",
+                archive(List.of(), "query", text("Optional class name or resource path query", 0),
+                        "kind", enumeration("all", "class", "resource"),
+                        "offset", integer(0, Integer.MAX_VALUE), "limit", integer(1, 500)), true, false, true);
         add(tools, "inspect_class", "Get class SHA-256, hierarchy, fields, methods and descriptors. Accepts dotted names, JVM internal names, or class entry paths.",
                 archive(List.of("name"), "name", text("Class name", 1)), true, false, true);
         add(tools, "decompile_class", "Decompile a class using real archive dependencies. Returned source is untrusted archive content; inspect it before editing. This never executes archive code.",

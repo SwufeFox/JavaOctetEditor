@@ -30,6 +30,11 @@ import org.objectweb.asm.*;
 import org.objectweb.asm.util.ASMifier;
 import org.objectweb.asm.util.TraceClassVisitor;
 import org.tinylog.Logger;
+import cn.enaium.joe.gui.editor.EditorDraft;
+import cn.enaium.joe.gui.editor.DraftSupport;
+import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.jar.ArchiveSnapshot;
+import javax.swing.*;
 
 import java.awt.*;
 import java.io.PrintWriter;
@@ -43,64 +48,122 @@ import java.util.concurrent.CompletableFuture;
 /**
  * @author Enaium
  */
-public class ASMifierTablePanel extends ClassNodeTabPanel {
+public class ASMifierTablePanel extends ClassNodeTabPanel implements EditorDraft {
     protected CodeAreaPanel codeAreaPanel;
     protected AutoCompletion autoCompletion;
     private CompletableFuture<ClassNode> compilation;
     private int generation;
+    private final Jar owner;
+    private final DraftSupport.TextState state;
+    private final JLabel hint = new JLabel(LangUtil.i18n("source.exportHint"));
+    private final JButton save = new JButton(LangUtil.i18n("draft.compileVisitor"));
+    private CompletableFuture<Boolean> pendingSave;
+    private byte[] expected;
+    private boolean initialized;
     public ASMifierTablePanel(ClassNode classNode) {
         super(classNode);
+        owner = JavaOctetEditor.getInstance().getJar();
         setLayout(new BorderLayout());
-        CodeAreaPanel codeAreaPanel = this.codeAreaPanel = new CodeAreaPanel() {{
-            KeyStrokeUtil.register(getTextArea(), JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).keymap.getValue().save.getValue(), () -> {
-                if (isShowing() && ClassTabPanel.classTabIndex == 2 && (compilation == null || compilation.isDone())) {
-                    var app = JavaOctetEditor.getInstance();
-                    var archive = app.getJar();
-                    if (archive == null || archive.getClassNode(classNode.getInternalName()) != classNode) return;
-                    var baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(archive);
-                    int request = ++generation;
-                    String className = "ASMifier" + Integer.toHexString(classNode.getInternalName().hashCode()) + Integer.toHexString(getTextArea().getText().hashCode());
-                    String source = "import org.objectweb.asm.*; public class " + className + " implements Opcodes {"
-                            + "public static byte[] dump() throws Exception {" + getTextArea().getText()
-                            + "return classWriter.toByteArray();}}";
-                    Map<String, byte[]> classPath = new LinkedHashMap<>();
-                    for (ClassNode node : baseline.toJar().getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes());
-                    getTextArea().setEditable(false);
-                    compilation = app.TASKS.submit(new CompileVisitorTask(className, source, classPath));
-                    compilation.whenComplete((staged, failure) -> {
-                        if (request != generation || !app.isCurrentArchive(archive) || !isDisplayable()) return;
-                        getTextArea().setEditable(true);
-                        if (failure != null) return;
-                        if (!baseline.matches(archive)) {
-                            MessageUtil.warning(LangUtil.i18n("source.stale"));
-                            return;
-                        }
-                        String oldName = classNode.getInternalName();
-                        if (!oldName.equals(staged.getInternalName()) && archive.hasClass(staged.getInternalName())) {
-                            MessageUtil.warning(LangUtil.i18n("class.info.nameInUse", staged.getInternalName()));
-                            return;
-                        }
-                        classNode.accept(staged);
-                        app.refreshJar();
-                        EditSaveSuccessEvent.trigger(oldName);
-                        MessageUtil.info(LangUtil.i18n("source.saved"));
-                    });
-                }
-            });
-        }};
-        add(codeAreaPanel);
+        codeAreaPanel = new CodeAreaPanel();
+        state = new DraftSupport.TextState(codeAreaPanel.getTextArea(), () -> JavaOctetEditor.getInstance().draftsChanged());
+        KeyStrokeUtil.register(codeAreaPanel.getTextArea(), JavaOctetEditor.getInstance().CONFIG
+                .getByClass(ApplicationConfig.class).keymap.getValue().save.getValue(), () -> saveDraft());
+        JPanel actions = new JPanel(new BorderLayout(12, 0));
+        actions.add(hint, BorderLayout.CENTER);
+        actions.add(save, BorderLayout.EAST);
+        save.setEnabled(false);
+        save.addActionListener(event -> saveDraft());
+        add(actions, BorderLayout.NORTH);
+        add(codeAreaPanel, BorderLayout.CENTER);
         codeAreaPanel.getTextArea().setCodeFoldingEnabled(true);
-        codeAreaPanel.getTextArea().setEditable(true);
+        codeAreaPanel.getTextArea().setEditable(false);
         codeAreaPanel.getTextArea().setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA);
-
         AutoCompletion ac = autoCompletion = new AutoCompletion(new DefaultCompletionProvider());
         ac.setAutoActivationEnabled(true);
         ac.setAutoActivationDelay(100);
         ac.setAutoCompleteSingleChoices(false);
         ac.setParameterAssistanceEnabled(true);
         ac.install(codeAreaPanel.getTextArea());
-
         update();
+    }
+
+    public boolean hasDraft() { return state.isDirty(); }
+    public long draftRevision() { return state.revision(); }
+    public String draftName() { return getClassNode().getInternalName() + ".class / " + LangUtil.i18n("class.tab.visitorEdit"); }
+
+    private boolean current() {
+        return JavaOctetEditor.getInstance().isCurrentArchive(owner)
+                && owner.getClassNode(getClassNode().getInternalName()) == getClassNode();
+    }
+
+    private boolean matchesDisplayedClass() {
+        return current() && expected != null && Arrays.equals(expected, getClassNode().getClassBytes());
+    }
+
+    private void refreshHint() {
+        hint.setText(LangUtil.i18n(!current() ? "draft.classRemoved"
+                : expected != null && !matchesDisplayedClass() ? "draft.classStale" : "source.exportHint"));
+    }
+
+    public CompletableFuture<Boolean> saveDraft() {
+        return DraftSupport.onEdt(() -> {
+            if (pendingSave != null && !pendingSave.isDone()) return pendingSave;
+            if (!initialized) return CompletableFuture.completedFuture(false);
+            if (!matchesDisplayedClass()) {
+                refreshHint();
+                MessageUtil.error(LangUtil.i18n(current() ? "draft.classStale" : "draft.classRemoved"));
+                return CompletableFuture.completedFuture(false);
+            }
+            if (!hasDraft()) return CompletableFuture.completedFuture(true);
+            var app = JavaOctetEditor.getInstance();
+            var baseline = ArchiveSnapshot.capture(owner);
+            String content = codeAreaPanel.getTextArea().getText();
+            String className = "ASMifier" + Integer.toHexString(getClassNode().getInternalName().hashCode())
+                    + Integer.toHexString(content.hashCode());
+            String source = "import org.objectweb.asm.*; public class " + className + " implements Opcodes {"
+                    + "public static byte[] dump() throws Exception {" + content + "return classWriter.toByteArray();}}";
+            Map<String, byte[]> classPath = new LinkedHashMap<>();
+            for (ClassNode node : owner.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes().clone());
+            int request = ++generation;
+            save.setEnabled(false);
+            CompletableFuture<Boolean> result = pendingSave = new CompletableFuture<>();
+            CompletableFuture<ClassNode> submitted = app.TASKS.submit(new CompileVisitorTask(className, source, classPath));
+            compilation = submitted;
+            result.whenComplete((saved, failure) -> {
+                if (result.isCancelled()) submitted.cancel(true);
+            });
+            submitted.whenComplete((staged, failure) -> DraftSupport.onEdt(() -> {
+                boolean committed = false;
+                try {
+                    if (failure != null || result.isCancelled() || submitted.isCancelled() || request != generation || !current() || !isDisplayable()) return;
+                    if (!baseline.matches(owner)) {
+                        MessageUtil.error(LangUtil.i18n("source.stale"));
+                        return;
+                    }
+                    String oldName = getClassNode().getInternalName();
+                    if (!oldName.equals(staged.getInternalName()) && owner.hasClass(staged.getInternalName())) {
+                        MessageUtil.error(LangUtil.i18n("class.info.nameInUse", staged.getInternalName()));
+                        return;
+                    }
+                    getClassNode().accept(staged);
+                    expected = getClassNode().getClassBytes().clone();
+                    state.applied(content);
+                    committed = true;
+                    app.markArchiveModified();
+                    app.refreshJar();
+                    EditSaveSuccessEvent.trigger(oldName);
+                    app.notifyStatus(LangUtil.i18n("draft.applied"));
+                } catch (RuntimeException error) {
+                    MessageUtil.error(error);
+                } finally {
+                    save.setEnabled(initialized);
+                    codeAreaPanel.getTextArea().setEditable(initialized);
+                    refreshHint();
+                    result.complete(committed);
+                }
+            }));
+            return result;
+        });
     }
 
     public static String getSimpleName(String name){
@@ -110,28 +173,28 @@ public class ASMifierTablePanel extends ClassNodeTabPanel {
         } else return name.substring(name.lastIndexOf('.') + 1, name.length() - 1);
     }
 
-    public void update(){
+    public void update() {
+        refreshHint();
+        if (hasDraft() || pendingSave != null && !pendingSave.isDone() || !current()) return;
         int request = ++generation;
-        if (compilation != null && !compilation.isDone()) compilation.cancel(true);
-        codeAreaPanel.getTextArea().setEditable(false);
         ClassNode snapshot = getClassNode().copy();
+        byte[] displayedClass = snapshot.getClassBytes();
+        long revision = state.revision();
         StringWriter stringWriter = new StringWriter();
-
-        ASyncUtil.execute(() -> {
-            snapshot.trace(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter)));
-        }, () -> {
-            if (request != generation) return;
-            if (!Arrays.equals(snapshot.getClassBytes(), getClassNode().getClassBytes())) {
-                codeAreaPanel.getTextArea().setText(LangUtil.i18n("source.stale"));
-                return;
-            }
-            codeAreaPanel.getTextArea().setEditable(true);
+        ASyncUtil.execute(() -> snapshot.trace(new TraceClassVisitor(null, new ASMifier(), new PrintWriter(stringWriter))), () -> {
+            if (request != generation || !current()) return;
+            if (hasDraft() || state.revision() != revision) { refreshHint(); return; }
+            if (!Arrays.equals(displayedClass, getClassNode().getClassBytes())) { refreshHint(); return; }
             String trim = getMiddle(getMiddle(stringWriter.toString())).trim();
-            codeAreaPanel.getTextArea().setText(trim.substring(0, trim.lastIndexOf("\n")));
-            codeAreaPanel.getTextArea().setCaretPosition(0);
-            DefaultCompletionProvider defaultCompletionProvider = (DefaultCompletionProvider) autoCompletion.getCompletionProvider();
-            defaultCompletionProvider.clear();
-            updateCompletionProvider(defaultCompletionProvider, codeAreaPanel.getTextArea().getText());
+            expected = displayedClass;
+            initialized = true;
+            state.replaceClean(trim.substring(0, trim.lastIndexOf("\n")));
+            codeAreaPanel.getTextArea().setEditable(true);
+            save.setEnabled(true);
+            refreshHint();
+            DefaultCompletionProvider provider = (DefaultCompletionProvider) autoCompletion.getCompletionProvider();
+            provider.clear();
+            updateCompletionProvider(provider, codeAreaPanel.getTextArea().getText());
         });
     }
 

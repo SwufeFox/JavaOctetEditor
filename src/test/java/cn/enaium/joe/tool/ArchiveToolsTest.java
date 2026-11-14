@@ -163,6 +163,58 @@ class ArchiveToolsTest {
     }
 
     @Test
+    void quickEntrySearchPaginatesFilesAndReflectsCommittedChanges() throws Exception {
+        Path input = directory.resolve("entries.jar");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(input))) {
+            put(zip, "demo/Sample.class", classBytes("demo/Sample"));
+            put(zip, "assets/Sample.properties", "key=value".getBytes(StandardCharsets.UTF_8));
+        }
+        String id = open(input);
+        JsonObject dotted = call("find_entries", id, "query", "dEmO.sAmPlE", "kind", "class");
+        assertEquals("demo/Sample.class", dotted.getAsJsonArray("entries").get(0).getAsJsonObject().get("path").getAsString());
+        JsonObject first = call("find_entries", id, "query", "sample", "limit", 1);
+        assertEquals(2, first.get("total").getAsInt());
+        assertTrue(first.get("hasMore").getAsBoolean());
+        JsonObject second = call("find_entries", id, "query", "sample", "limit", 1,
+                "offset", first.get("nextOffset").getAsInt());
+        assertFalse(second.get("hasMore").getAsBoolean());
+        var paths = new java.util.HashSet<String>();
+        for (JsonObject page : java.util.List.of(first, second)) {
+            paths.add(page.getAsJsonArray("entries").get(0).getAsJsonObject().get("path").getAsString());
+        }
+        assertEquals(java.util.Set.of("demo/Sample.class", "assets/Sample.properties"), paths);
+
+        call("write_resource", id, "path", "assets/Sample.extra", "content", "new", "expectedRevision", 0);
+        assertEquals(3, call("find_entries", id, "query", "sample").get("total").getAsInt());
+        call("delete_entry", id, "path", "demo/Sample.class", "expectedRevision", 1);
+        assertEquals(0, call("find_entries", id, "query", "sample", "kind", "class").get("total").getAsInt());
+        call("compile_sources", id, "sources", Map.of("demo.NewSample", "package demo; public class NewSample {}"),
+                "expectedRevision", 2);
+        JsonObject added = call("find_entries", id, "query", "newSample", "kind", "class");
+        assertEquals("demo/NewSample.class", added.getAsJsonArray("entries").get(0).getAsJsonObject().get("path").getAsString());
+        assertEquals(3, added.get("revision").getAsInt());
+    }
+
+    @Test
+    void versionedClassResourcesRemainSeparateFromEditableBaseClasses() throws Exception {
+        String id = open(fixture("versioned.jar"));
+        String baseHash = call("inspect_class", id, "name", "demo.Sample").get("sha256").getAsString();
+        byte[] versioned = classBytes("demo/Sample");
+        String path = "META-INF/versions/17/demo/Sample.class";
+        call("write_resource", id, "path", path, "encoding", "base64",
+                "content", Base64.getEncoder().encodeToString(versioned), "expectedRevision", 0);
+        assertEquals(baseHash, call("inspect_class", id, "name", "demo.Sample").get("sha256").getAsString());
+        JsonObject found = call("find_entries", id, "query", path, "kind", "resource");
+        assertEquals(path, found.getAsJsonArray("entries").get(0).getAsJsonObject().get("path").getAsString());
+        assertFailure("INVALID_ARGUMENT", () -> call("write_resource", id, "path", "demo/Sample.class",
+                "content", "invalid", "expectedRevision", 1));
+        Path output = directory.resolve("versioned-export.jar");
+        call("export_archive", id, "path", output.toString(), "expectedRevision", 1);
+        assertArrayEquals(versioned, entry(output, path));
+        assertArrayEquals(classBytes("demo/Sample"), entry(output, "demo/Sample.class"));
+    }
+
+    @Test
     void deletingExactEntriesPreservesUnrelatedContent() throws Exception {
         String id = open(fixture("delete.jar"));
         call("delete_entry", id, "path", "demo/Sample.class", "expectedRevision", 0);

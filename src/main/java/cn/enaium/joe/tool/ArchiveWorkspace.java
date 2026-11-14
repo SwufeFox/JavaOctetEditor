@@ -2,6 +2,8 @@ package cn.enaium.joe.tool;
 
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.jar.ArchiveEntryIndex;
+import cn.enaium.joe.jar.ResourceEntryPath;
 import cn.enaium.joe.service.DecompileService;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.compiler.CompileError;
@@ -34,6 +36,8 @@ final class ArchiveWorkspace {
     private final Map<String, String> digests = new HashMap<>();
     private List<String> classNames;
     private List<String> resourceNames;
+    private ArchiveEntryIndex entryIndex;
+    private long entryIndexRevision = -1;
     private Path lastExport;
     private long revision;
 
@@ -72,6 +76,7 @@ final class ArchiveWorkspace {
             case "list_classes" -> listClasses(args);
             case "list_resources" -> listResources(args);
             case "inspect_class" -> inspect(args);
+            case "find_entries" -> findEntries(args, cancelled);
             case "decompile_class" -> decompile(args);
             case "disassemble_class" -> disassemble(args);
             case "search_archive" -> search(args);
@@ -161,6 +166,37 @@ final class ArchiveWorkspace {
         }
         JsonObject result = response();
         page.finish(result, "resources");
+        return result;
+    }
+
+    private JsonObject findEntries(JsonObject args, BooleanSupplier cancelled) {
+        checkCancelled(cancelled);
+        if (entryIndex == null || entryIndexRevision != revision) {
+            entryIndex = ArchiveEntryIndex.capture(jar);
+            entryIndexRevision = revision;
+        }
+        String kind = text(args, "kind", "all");
+        Set<ArchiveEntryIndex.Kind> kinds = switch (kind) {
+            case "class" -> Set.of(ArchiveEntryIndex.Kind.CLASS);
+            case "resource" -> Set.of(ArchiveEntryIndex.Kind.RESOURCE);
+            default -> EnumSet.allOf(ArchiveEntryIndex.Kind.class);
+        };
+        ArchiveEntryIndex.Page page = entryIndex.search(text(args, "query", ""), kinds,
+                number(args, "offset", 0), number(args, "limit", 100));
+        checkCancelled(cancelled);
+        JsonArray entries = new JsonArray();
+        for (ArchiveEntryIndex.Entry entry : page.entries()) {
+            JsonObject item = new JsonObject();
+            item.addProperty("kind", entry.kind().name().toLowerCase(Locale.ROOT));
+            item.addProperty("path", entry.path());
+            item.addProperty("displayName", entry.displayName());
+            entries.add(item);
+        }
+        JsonObject result = response();
+        result.add("entries", entries);
+        result.addProperty("total", page.total());
+        result.addProperty("hasMore", page.hasMore());
+        if (page.hasMore()) result.addProperty("nextOffset", page.nextOffset());
         return result;
     }
 
@@ -423,10 +459,7 @@ final class ArchiveWorkspace {
 
     private JsonObject writeResource(JsonObject args, BooleanSupplier cancelled) throws ToolException {
         checkRevision(args, cancelled);
-        String path = entryPath(args.get("path").getAsString());
-        if (path.endsWith(".class")) {
-            throw new ToolException("INVALID_ARGUMENT", "Use compile_sources to change classes; write_resource accepts non-class entries.");
-        }
+        String path = ResourceEntryPath.validate(jar, args.get("path").getAsString());
         byte[] bytes = text(args, "encoding", "utf8").equals("base64")
                 ? Base64.getDecoder().decode(args.get("content").getAsString())
                 : encodeUtf8(args.get("content").getAsString());

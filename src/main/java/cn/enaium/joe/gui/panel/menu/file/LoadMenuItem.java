@@ -17,12 +17,13 @@
 package cn.enaium.joe.gui.panel.menu.file;
 
 import cn.enaium.joe.JavaOctetEditor;
-import cn.enaium.joe.util.task.tasks.InputJarTask;
 import cn.enaium.joe.util.JFileChooserUtil;
 import cn.enaium.joe.util.LangUtil;
 
 import javax.swing.*;
 import java.io.File;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 
 /**
  * @author Enaium
@@ -30,10 +31,13 @@ import java.io.File;
 public class LoadMenuItem extends JMenuItem {
     public LoadMenuItem() {
         super(LangUtil.i18n("menu.file.load"));
+        setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
         addActionListener(e -> {
-            File show = JFileChooserUtil.show(JFileChooserUtil.Type.OPEN);
+            File show = JFileChooserUtil.show(JFileChooserUtil.Type.OPEN,
+                    new javax.swing.filechooser.FileNameExtensionFilter(LangUtil.i18n("document.inputFilter"), "jar", "zip", "class"),
+                    JFileChooser.FILES_AND_DIRECTORIES);
             if (show != null) {
-                JavaOctetEditor.getInstance().TASKS.submit(new InputJarTask(show));
+                JavaOctetEditor.getInstance().requestOpenArchive(show);
             }
         });
     }

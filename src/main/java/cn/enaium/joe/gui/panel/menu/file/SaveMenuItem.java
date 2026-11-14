@@ -17,32 +17,19 @@
 package cn.enaium.joe.gui.panel.menu.file;
 
 import cn.enaium.joe.JavaOctetEditor;
-import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.task.tasks.OutputJarTask;
-import cn.enaium.joe.util.JFileChooserUtil;
 import cn.enaium.joe.util.LangUtil;
 
 import javax.swing.*;
-import java.io.File;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 
 /**
  * @author Enaium
  */
 public class SaveMenuItem extends JMenuItem {
     public SaveMenuItem() {
-        super(LangUtil.i18n("menu.file.save"));
-        addActionListener(e -> {
-            Jar jar = JavaOctetEditor.getInstance().getJar();
-            if (jar == null) {
-                cn.enaium.joe.util.MessageUtil.warning(LangUtil.i18n("workspace.open"));
-                return;
-            }
-            File show = JFileChooserUtil.show(JFileChooserUtil.Type.SAVE);
-            if (show != null) {
-                JavaOctetEditor.getInstance().TASKS.submit(new OutputJarTask(jar, show)).thenAccept(success -> {
-                    if (success) cn.enaium.joe.util.MessageUtil.info(LangUtil.i18n("workspace.exported", show.getAbsolutePath()));
-                });
-            }
-        });
+        super(LangUtil.i18n("document.export"));
+        setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        addActionListener(e -> JavaOctetEditor.getInstance().exportArchive());
     }
 }

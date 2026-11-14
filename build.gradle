@@ -1,4 +1,6 @@
+import java.nio.file.Files
 import java.text.SimpleDateFormat
+import java.time.Duration
 
 plugins {
     id 'java'
@@ -61,6 +63,12 @@ dependencies {
     implementation 'com.fifesoft:autocomplete:3.3.2'
 }
 
+sourceSets {
+    smoke {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+    }
+}
+
 test {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
@@ -85,5 +93,25 @@ tasks.register('run', JavaExec) {
     workingDir = layout.projectDirectory.dir('run').asFile
     doFirst {
         workingDir.mkdirs()
+    }
+}
+
+tasks.register('desktopSmoke', JavaExec) {
+    group = 'verification'
+    description = 'Exercise desktop editing and export against the packaged JAR in a graphical session'
+    dependsOn tasks.named('smokeClasses'), tasks.named('shadowJar')
+    mainClass = 'cn.enaium.joe.smoke.DesktopSmoke'
+    classpath = sourceSets.smoke.output + files(tasks.named('shadowJar').flatMap { it.archiveFile })
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    timeout = Duration.ofMinutes(3)
+    doFirst {
+        def smokeRoot = layout.buildDirectory.dir('desktop-smoke').get().asFile
+        smokeRoot.mkdirs()
+        def smokeRunDirectory = Files.createTempDirectory(smokeRoot.toPath(), 'run-').toFile()
+        workingDir = smokeRunDirectory
+        setArgs([smokeRunDirectory.absolutePath])
+        logger.lifecycle("Desktop smoke evidence: ${smokeRunDirectory}")
     }
 }

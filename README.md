@@ -38,6 +38,7 @@ The CLI runs without a desktop or display server. It writes one JSON value to st
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --help
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli tools
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli list_classes --archive application.jar
+java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli find_entries --archive application.jar '{"query":"calculator","kind":"all"}'
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli inspect_class --archive application.jar '{"name":"example.Calculator"}'
 java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli decompile_class --archive application.jar '{"name":"example.Calculator","backend":"CFR"}'
 ```
@@ -92,7 +93,7 @@ Available tools:
 | Operation | Tools |
 | --- | --- |
 | Workspace lifecycle | `open_archive`, `archive_info`, `close_archive` |
-| Discovery | `list_classes`, `list_resources`, `inspect_class` |
+| Discovery | `find_entries`, `list_classes`, `list_resources`, `inspect_class` |
 | Code analysis | `decompile_class`, `disassemble_class`, `search_archive` |
 | Resource editing | `read_resource`, `write_resource`, `delete_entry` |
 | Source editing and persistence | `compile_sources`, `export_archive` |
@@ -100,7 +101,7 @@ Available tools:
 Recommended agent workflow:
 
 1. Call `open_archive` with `path`; keep its explicit `archiveId` and `revision`.
-2. Inspect/decompile the relevant classes and search definitions, references, constants, or opcodes. Lists and searches support `offset`/`limit`; resource reads support UTF-8 and base64 pagination.
+2. Use `find_entries` to locate class and resource files by name, abbreviated name, or path. Its query is case-insensitive, accepts dotted class names, and returns ranked exact paths, a total, and `offset`/`limit` pagination; filter with `kind: "class"`, `"resource"`, or `"all"`. Inspect/decompile classes and use `search_archive` for definitions, references, constants, or opcodes. Resource reads support UTF-8 and base64 pagination.
 3. Submit complete source files with `compile_sources`, or change resources, passing `archiveId` and `expectedRevision`. A stale revision fails without changing data. Successful mutations return the new revision.
 4. Inspect the result, then call `export_archive` with the current revision and a chosen output path. Set `overwrite: true` only when replacement is intended.
 5. Call `close_archive` to release the workspace. Separate handles keep separate in-memory edits, even when opened from the same input file.
@@ -109,38 +110,36 @@ Tools inspect and compile bytecode without executing archive classes. Annotation
 
 ## Usage
 
-### File Input
-- From the top menu `File` > `Load...`
-- From the top menu `File` > `Load Recent`
-- Drag the file directly into the window
+### Open and navigate
 
-### File Output
-The changes you make are not saved directly into the file, you need to export it.
+Open a JAR, ZIP, class file, or class directory from File, the recent list, or by dropping it into the window. The tree filter updates as you type. Clear it with Escape. Quick open searches class and resource names together, accepts dotted class names and abbreviations, and displays full paths to distinguish entries with the same filename. Opening an entry again selects its existing tab.
 
-- top menu `File` > `Save...` for jar.
-- top menu `File` > `Save All Sources` for the decompiled source jar.
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+O | Open an archive or class |
+| Ctrl+P | Quick open a class or resource |
+| Ctrl+L | Focus the tree filter |
+| Ctrl+S (configurable) | Apply the current source, visitor, or text-resource draft in memory |
+| Ctrl+Shift+S | Export the archive |
+| Ctrl+W | Close the current tab, checking for drafts |
 
-### Edit
+### Edit and export
 
-#### Bytecode View
- view only
+Bytecode view is read-only. Decompile view edits Java source; Visitor edit compiles ASM visitor code; Info edit updates class metadata. Source compilation resolves the archive's real dependencies, preserves the original Java target, and commits generated classes together. Failed or cancelled compilation keeps the previous bytecode and your draft.
 
-#### Decompile Edit
- view and edit.
-Saving edited source with the configured save shortcut compiles against the current archive's real bytecode dependencies. Generated classes are staged before replacement; compilation errors keep the previous classes and show diagnostics. Source changes still require archive export to persist.
+Text resources have an Apply action. Applying changes updates the in-memory archive; export writes them to disk. Tab markers identify unapplied drafts, while the window title and status distinguish those drafts from applied changes that have not been exported. Closing tabs offers Apply / Discard / Cancel. Opening another archive or closing the window also offers export when the current archive has changes. Edits made while loading or exporting remain protected.
 
-#### Visitor Edit
+Use File > Export archive to write a JAR/ZIP, or Export all sources for decompiled source output. The archive exporter suggests a separate edited filename and confirms replacement of existing files. If drafts are still open, choose whether to apply them first or export the applied archive content while retaining the drafts.
 
-Edit the Visitor code and save (ctrl + s (Configurable)) it.
+### Resources and individual files
 
-#### Info Edit
+Use the File menu to import a file as a resource at a relative archive path. Entry context menus offer full-path copying and exact single-file export; resource headers also offer replace and delete. Replacing or deleting a resource checks its open draft before changing it. These edits stay in memory until archive export.
 
-Edit the outline info for class.
+Base `.class` entries are edited through the class editors. Multi-release entries under `META-INF/versions/` remain resources and can be replaced as bytes. Binary files and images retain their respective viewers; invalid UTF-8 is not silently rewritten as replacement characters.
 
 ### Search
-Search Field, Method, LDC Constant, Opcode...
 
-Right click the result could have a operation menu.
+Search fields, methods, constants, and opcodes from the Search menu. Open a result through its context menu.
 
 ### Remapping
 - Drag the mapping file directly into the window
@@ -152,7 +151,7 @@ Archive loading accepts JAR/ZIP files, directories, and single class files. Entr
 
 Exports use a temporary sibling file. Replacing an existing output requires atomic filesystem replacement; unsupported filesystems fail with the original preserved. CLI/MCP additionally require explicit overwrite permission. Modified signed archives need to be signed again before signature verification can succeed.
 
-Background desktop operations work on owned archive snapshots, including resource bytes and captured decompiler options. Compilation, visitor edits, remapping, and transforms reject conflicting later edits before publication; exports represent the captured archive rather than a mixture of concurrent changes. A newer load request invalidates older publication even if the newer load fails or is cancelled. Retained class wrappers and unrelated editor tabs remain in place; removed/renamed classes close only their affected views. Source recompilation removes obsolete nested classes using bytecode ownership metadata and preserves unrelated top-level names containing `$`.
+Background desktop operations work on owned archive snapshots, including resource bytes and captured decompiler options. Compilation, visitor edits, remapping, and transforms reject conflicting later edits before publication; exports represent captured bytes directly and keep newer changes marked as unexported. A newer load request invalidates older publication even if the newer load fails or is cancelled; a load also refuses to discard edits made after replacement was authorized. Retained class wrappers and unrelated editor tabs remain in place. Removed classes with dirty drafts keep their text for explicit resolution. Source recompilation removes obsolete nested classes using bytecode ownership metadata and preserves unrelated top-level names containing `$`.
 
 Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration.
 
@@ -162,4 +161,10 @@ Tests cover archive round trips and failed-write preservation, snapshot isolatio
 ./gradlew test --tests 'cn.enaium.joe.tool.ArchiveToolsTest'
 ```
 
-Desktop changes also need an interactive smoke check of the affected load, browse, edit/recompile, and export paths.
+Run the desktop journeys in a graphical session:
+
+```sh
+./gradlew desktopSmoke
+```
+
+This explicit task builds the runnable JAR and exercises real Swing load, source compilation, newer-draft preservation, keyboard navigation, guarded tab/window close, resource import/replace/delete, single-file export, and archive export/cancellation. Each run uses a fresh directory under `build/desktop-smoke/` for fixtures, application settings, exported files, and screenshots. The smoke source is in `src/smoke/java/`; it runs separately from the headless `test` and default `build` tasks.

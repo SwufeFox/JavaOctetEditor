@@ -20,6 +20,8 @@ import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.util.event.events.EditSaveSuccessEvent;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.classes.ClassNode;
+import cn.enaium.joe.gui.editor.DraftSupport;
+import cn.enaium.joe.jar.Jar;
 
 import javax.swing.*;
 import java.awt.*;
@@ -41,10 +43,12 @@ public class ClassTabPanel extends JPanel {
 
     public final ClassNode classNode;
     protected final JTabbedPane jTabbedPane;
+    private final Jar owner;
 
     public ClassTabPanel(ClassNode classNode) {
         super(new BorderLayout());
         this.classNode = classNode;
+        owner = JavaOctetEditor.getInstance().getJar();
         JTabbedPane jTabbedPane = new JTabbedPane();
         jTabbedPane.setTabPlacement(JTabbedPane.BOTTOM);
         jTabbedPane.addTab(LangUtil.i18n("class.tab.bytecodeView"), traceBytecodeTabPanel = new TraceBytecodeTabPanel(classNode));
@@ -66,29 +70,38 @@ public class ClassTabPanel extends JPanel {
         add(this.jTabbedPane = jTabbedPane);
     }
 
-    public void update(boolean forced){
-        if (forced || classTabIndex != 0) traceBytecodeTabPanel.update();
-        if (forced || classTabIndex != 1) decompileTabPanel.update();
-        if (forced || classTabIndex != 2) asmTablePanel.update();
-        if (forced || classTabIndex != 3) classInfoTabPanel.update();
+    public void update(boolean forced) {
+        decompileTabPanel.update();
+        asmTablePanel.update();
+        if (JavaOctetEditor.getInstance().isCurrentArchive(owner)
+                && owner.getClassNode(classNode.getInternalName()) == classNode) {
+            traceBytecodeTabPanel.update();
+            classInfoTabPanel.update();
+        }
     }
 
     public static void clearPanels() {
         internalName2panel.clear();
     }
 
-    public static void reconcile(cn.enaium.joe.jar.Jar archive, JTabbedPane tabs) {
+    public static void reconcile(Jar archive, JTabbedPane tabs) {
         for (int index = tabs.getTabCount() - 1; index >= 0; index--) {
             if (!(tabs.getComponentAt(index) instanceof ClassTabPanel panel)) continue;
-            if (archive.getClassNode(panel.classNode.getInternalName()) != panel.classNode) {
+            boolean live = panel.owner == archive && archive.getClassNode(panel.classNode.getInternalName()) == panel.classNode;
+            if (!live && !DraftSupport.hasDrafts(panel)) {
                 tabs.removeTabAt(index);
             } else {
-                tabs.setTitleAt(index, panel.classNode.getSimpleName());
+                String title = panel.classNode.getSimpleName();
+                if (!live) title += " (" + LangUtil.i18n("draft.removed") + ")";
+                tabs.setTitleAt(index, title + (DraftSupport.hasDrafts(panel) ? " *" : ""));
+                tabs.setToolTipTextAt(index, live ? panel.classNode.getInternalName() + ".class"
+                        : LangUtil.i18n("draft.classRemoved"));
+                panel.update(false);
             }
         }
         internalName2panel.entrySet().removeIf(entry -> {
             ClassTabPanel panel = entry.getValue().get();
-            return panel == null || archive.getClassNode(panel.classNode.getInternalName()) != panel.classNode;
+            return panel == null || tabs.indexOfComponent(panel) < 0;
         });
     }
 

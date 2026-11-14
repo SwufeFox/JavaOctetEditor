@@ -17,65 +17,80 @@
 package cn.enaium.joe.gui.panel;
 
 import cn.enaium.joe.JavaOctetEditor;
-import cn.enaium.joe.jar.Jar;
-import cn.enaium.joe.util.JTreeUtil;
+import cn.enaium.joe.gui.component.FileTree;
 import cn.enaium.joe.util.LangUtil;
-import cn.enaium.joe.util.classes.ClassNode;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
-import java.util.Map;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import java.awt.BorderLayout;
+import java.awt.event.ActionEvent;
 
-/**
- * @author Enaium
- */
+/** Compact archive filter with visible result state and a window-wide focus shortcut. */
 public class LeftPanel extends BorderPanel {
+    private final FileTree tree = JavaOctetEditor.getInstance().fileTree;
+    private final JTextField filter = new JTextField();
+    private final JLabel count = new JLabel();
+
     public LeftPanel() {
-        setCenter(new JScrollPane(JavaOctetEditor.getInstance().fileTree));
-        setBottom(new BorderPanel() {{
-            setBorder(new EmptyBorder(5, 0, 0, 0));
-            setCenter(new JTextField() {{
-                putClientProperty("JTextField.placeholderText", LangUtil.i18n("menu.search"));
-                JTextField jTextField = this;
-                addKeyListener(new KeyAdapter() {
-                    @Override
-                    public void keyPressed(KeyEvent e) {
-                        if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                            Jar jar = JavaOctetEditor.getInstance().getJar();
-                            if (jar != null) {
-                                if (!jTextField.getText().replace(" ", "").isEmpty()) {
-                                    Jar searchedJar = new Jar();
-                                    String lowCaseSearchText = jTextField.getText().toLowerCase();
+        setCenter(new JScrollPane(tree));
+        JPanel controls = new JPanel(new BorderLayout(5, 4));
+        controls.setBorder(new EmptyBorder(5, 5, 5, 5));
+        filter.putClientProperty("JTextField.placeholderText", LangUtil.i18n("navigation.filterPlaceholder"));
+        filter.getAccessibleContext().setAccessibleName(LangUtil.i18n("navigation.filter"));
+        filter.setToolTipText(LangUtil.i18n("navigation.filterHint"));
+        JButton clear = new JButton(LangUtil.i18n("navigation.clear"));
+        clear.setToolTipText(LangUtil.i18n("navigation.clearHint"));
+        clear.addActionListener(event -> {
+            filter.setText("");
+            filter.requestFocusInWindow();
+        });
+        controls.add(filter, BorderLayout.CENTER);
+        controls.add(clear, BorderLayout.EAST);
+        controls.add(count, BorderLayout.SOUTH);
+        setBottom(controls);
+        filter.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { changed(); }
+            @Override public void removeUpdate(DocumentEvent event) { changed(); }
+            @Override public void changedUpdate(DocumentEvent event) { changed(); }
+            private void changed() {
+                tree.setFilterQuery(filter.getText());
+                clear.setEnabled(!filter.getText().isEmpty());
+            }
+        });
+        tree.addPropertyChangeListener(event -> {
+            if (event.getPropertyName().equals("filterQuery") && !filter.getText().equals(tree.getFilterQuery()))
+                filter.setText(tree.getFilterQuery());
+            if (event.getPropertyName().equals("matchCount") || event.getPropertyName().equals("filterBusy")
+                    || event.getPropertyName().equals("archive"))
+                refreshCount();
+        });
+        filter.getInputMap().put(KeyStroke.getKeyStroke("ESCAPE"), "clearFilter");
+        filter.getActionMap().put("clearFilter", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) {
+                if (filter.getText().isEmpty()) tree.requestFocusInWindow();
+                else filter.setText("");
+            }
+        });
+        filter.addActionListener(event -> tree.requestFocusInWindow());
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("control L"), "focusArchiveFilter");
+        getActionMap().put("focusArchiveFilter", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) {
+                filter.requestFocusInWindow();
+                filter.selectAll();
+            }
+        });
+        clear.setEnabled(false);
+        refreshCount();
+    }
 
-                                    for (ClassNode classNode : jar.getClasses()) {
-                                        if (
-                                                jTextField.getText().indexOf('/') > -1 ?
-                                                        classNode.getInternalName().toLowerCase().contains(lowCaseSearchText) :
-                                                        classNode.getCanonicalName().toLowerCase().contains(lowCaseSearchText)
-                                        ) {
-                                            searchedJar.putClassNode(classNode);
-                                        }
-                                    }
-
-                                    for (Map.Entry<String, byte[]> entry : jar.getResources().entrySet()) {
-                                        if(entry.getKey().toLowerCase().contains(lowCaseSearchText)) {
-                                            searchedJar.putResource(entry.getKey(), entry.getValue());
-                                        }
-                                    }
-
-                                    JavaOctetEditor.getInstance().fileTree.refresh(searchedJar);
-
-                                    JTreeUtil.setTreeExpandedState(JavaOctetEditor.getInstance().fileTree, true);
-                                } else {
-                                    JavaOctetEditor.getInstance().fileTree.refresh(jar);
-                                }
-                            }
-                        }
-                    }
-                });
-            }});
-        }});
+    private void refreshCount() {
+        if (JavaOctetEditor.getInstance().getJar() == null)
+            count.setText(LangUtil.i18n("navigation.noArchive"));
+        else if (tree.isFilterBusy()) count.setText(LangUtil.i18n("navigation.searching"));
+        else if (tree.getMatchCount() == 0)
+            count.setText(LangUtil.i18n(tree.getFilterQuery().isBlank() ? "navigation.noEntries" : "navigation.noMatches"));
+        else count.setText(LangUtil.i18n("navigation.matchCount", tree.getMatchCount()));
     }
 }

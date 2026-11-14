@@ -355,6 +355,35 @@ class ArchiveIOTest {
         assertEquals(3, value(reopened.getClassNode("Added").getClassBytes()));
     }
 
+    @Test
+    void snapshotExportRetainsCapturedBytesAndCancellationPreservesExistingOutput() throws Exception {
+        Jar archive = new Jar();
+        byte[] originalClass = classBytes("pkg/Example", 1);
+        byte[] resource = { 0, 1, -1, 4 };
+        archive.putClassNode(ClassNode.of(originalClass));
+        archive.putResource("data.bin", resource);
+        ArchiveSnapshot captured = ArchiveSnapshot.capture(archive);
+        archive.putClassNode(ClassNode.of(classBytes("pkg/Example", 2)));
+        resource[0] = 9;
+        Path output = directory.resolve("snapshot.jar");
+        List<Integer> progress = new ArrayList<>();
+
+        ArchiveIO.write(captured, output, false, progress::add);
+
+        try (ZipFile zip = new ZipFile(output.toFile())) {
+            assertArrayEquals(originalClass, zip.getInputStream(zip.getEntry("pkg/Example.class")).readAllBytes());
+            assertArrayEquals(new byte[] { 0, 1, -1, 4 }, zip.getInputStream(zip.getEntry("data.bin")).readAllBytes());
+        }
+        assertCompleted(progress);
+        byte[] exported = Files.readAllBytes(output);
+        ArchiveSnapshot changed = ArchiveSnapshot.capture(archive);
+        assertThrows(java.util.concurrent.CancellationException.class, () -> ArchiveIO.write(changed, output, true, value -> {
+            if (value == 100) throw new java.util.concurrent.CancellationException("Cancelled before replacement");
+        }));
+        assertArrayEquals(exported, Files.readAllBytes(output));
+        assertOnlyOutputRemains(output);
+    }
+
     private Path zip(String fileName, Map<String, byte[]> entries) throws IOException {
         Path path = directory.resolve(fileName);
         try (ZipOutputStream stream = new ZipOutputStream(Files.newOutputStream(path))) {

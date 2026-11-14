@@ -39,6 +39,15 @@ public class BottomPanel extends JPanel {
     private final JButton cancelButton = new JButton(LangUtil.i18n("tasks.cancelAll"));
     private final TaskListPopup taskListPopup = new TaskListPopup();
     private final Timer timer = new Timer(250, event -> refreshStatus());
+    private String notification;
+    private long notificationUntil;
+
+    public void notifyStatus(String message) {
+        notification = message;
+        notificationUntil = System.currentTimeMillis() + 10_000;
+        progress.setToolTipText(message);
+        refreshStatus();
+    }
 
     public BottomPanel() {
         super(new BorderLayout(12, 0));
@@ -62,15 +71,19 @@ public class BottomPanel extends JPanel {
     public void refreshStatus() {
         var app = JavaOctetEditor.getInstance();
         var archive = app.getJar();
+        String state = app.hasArchiveChanges() ? LangUtil.i18n("document.modified") : LangUtil.i18n("document.clean");
+        if (app.hasUnappliedDrafts()) state += ", " + LangUtil.i18n("document.drafts");
         archiveStatus.setText(archive == null ? LangUtil.i18n("workspace.noArchive")
-                : LangUtil.i18n("workspace.archiveStatus", archive.getClassSize(), archive.getResourceSize()));
+                : LangUtil.i18n("workspace.archiveStatus", archive.getClassSize(), archive.getResourceSize()) + " — " + state);
+        archiveStatus.setToolTipText(app.getArchiveSource() == null ? null : app.getArchiveSource().getAbsolutePath());
         List<Pair<AbstractTask<?>, CompletableFuture<?>>> tasks = app.TASKS.getTask();
         cancelButton.setEnabled(tasks.stream().anyMatch(entry -> !entry.getValue().isDone()));
         tasksButton.setText(LangUtil.i18n("tasks.show") + " (" + tasks.size() + ")");
         if (tasks.isEmpty()) {
             progress.setIndeterminate(false);
             progress.setValue(0);
-            progress.setString(LangUtil.i18n("tasks.ready"));
+            progress.setString(notification != null && System.currentTimeMillis() < notificationUntil
+                    ? notification : LangUtil.i18n("tasks.ready"));
         } else {
             var entry = tasks.getLast();
             AbstractTask<?> task = entry.getKey();
