@@ -25,6 +25,8 @@ Java paths below are relative to `src/main/java/cn/enaium/joe/`:
 
 Resources live under `src/main/resources/`: `lang/` contains UI translations, `language/` contains Java/bytecode syntax definitions, and `icons/` contains SVG assets. Keep the two language directories distinct.
 
+The product website lives in `site/`: plain HTML/CSS/JavaScript and local assets, separate from Gradle packaging. Open `site/index.html`, or serve it with `python -m http.server 4173 --bind 127.0.0.1 --directory site`. Verify website changes in a browser at desktop and mobile widths; keep the archive demo labelled as sample data and download links aligned with actual releases/builds.
+
 ## Development Commands
 
 Run from the repository root. These examples use the POSIX wrapper; use `gradlew.bat` with the same arguments in Windows shells.
@@ -66,6 +68,7 @@ java -jar build/libs/JavaOctetEditor-1.4.9.jar --mcp
 - `build.gradle`: Java toolchain, full runtime dependency packaging, JUnit configuration, application/agent manifest, desktop `run`, and explicit `desktopSmoke` task. Shadow includes runtime dependencies and merges service files; keep the runnable and plain JAR names distinct.
 - `settings.gradle`, `gradle.properties`, `gradle/wrapper/gradle-wrapper.properties`: project name, artifact version, and Gradle distribution. The UI also declares `JavaOctetEditor.VERSION`; keep it aligned when changing releases.
 - `.github/workflows/build_snapshot.yml`, `.github/workflows/build_release.yml`: Ubuntu/Temurin 21 builds and JAR artifact publishing; releases use manual dispatch.
+- `.github/dependabot.yml`: weekly Gradle and GitHub Actions updates; minor/patch groups and individual major-version PRs.
 
 ## Runtime/Tooling Preferences
 

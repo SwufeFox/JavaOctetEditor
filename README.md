@@ -28,6 +28,20 @@ java -jar build/libs/JavaOctetEditor-1.4.9.jar application.jar
 
 `build` runs the regression tests and creates the runnable shaded JAR. The `-plain.jar` is a development artifact without bundled dependencies. Match the version in these commands to `gradle.properties`. `run` keeps desktop settings in `run/`; packaged launches keep settings in the launch working directory. There is no separate lint task.
 
+## Product Website
+
+The product page lives in `site/` and uses plain HTML, CSS, and JavaScript, with local assets and no package installation. Open `site/index.html` directly, or preview it over HTTP:
+
+```sh
+python -m http.server 4173 --bind 127.0.0.1 --directory site
+```
+
+Visit `http://127.0.0.1:4173`. The page includes a clearly labelled sample archive preview, source/bytecode switching, file filtering, desktop/CLI/MCP commands, clipboard actions, theme selection, and an actual desktop screenshot. The download link points to this repository's snapshot build workflow; downloading GitHub Actions artifacts requires signing in. The website is separate from Gradle's application packaging and can be hosted as static files.
+
+## Dependency Updates
+
+`.github/dependabot.yml` checks Gradle dependencies and GitHub Actions every Monday at 09:00 Asia/Shanghai. Minor and patch updates are grouped by ecosystem, while major updates receive individual pull requests. Each ecosystem allows up to five open version-update PRs; dependency updates remain subject to review and CI.
+
 ## AI and Automation
 
 ### JSON CLI
