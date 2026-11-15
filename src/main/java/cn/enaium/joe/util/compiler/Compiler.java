@@ -116,7 +116,8 @@ public class Compiler {
                 JavaCompiler.CompilationTask task = compiler.getTask(output, manager, reporter,
                         List.of("-proc:none", "--release", Integer.toString(release)), null, units);
                 if (!Boolean.TRUE.equals(task.call())) {
-                    throw new CompileError(formatDiagnostics(diagnostics, output.toString()));
+                    List<CompilerDiagnostic> reported = captureDiagnostics(diagnostics);
+                    throw new CompileError(formatDiagnostics(reported, output.toString()), null, reported);
                 }
                 Map<String, byte[]> classes = manager.getClasses();
                 if (!application) {
@@ -136,10 +137,11 @@ public class Compiler {
         } catch (CompileError error) {
             throw error;
         } catch (IOException | RuntimeException error) {
-            String details = formatDiagnostics(diagnostics, output.toString());
+            List<CompilerDiagnostic> reported = captureDiagnostics(diagnostics);
+            String details = formatDiagnostics(reported, output.toString());
             throw new CompileError("Java compilation failed for " + (application ? "application" : "archive")
                     + " target Java " + release + " (sources " + sources.keySet() + "): "
-                    + error.getMessage() + "\n" + details, error);
+                    + error.getMessage() + "\n" + details, error, reported);
         }
     }
 
@@ -187,15 +189,27 @@ public class Compiler {
         return major - 44;
     }
 
-    private static String formatDiagnostics(DiagnosticCollector<JavaFileObject> diagnostics, String output) {
+    private static List<CompilerDiagnostic> captureDiagnostics(DiagnosticCollector<JavaFileObject> diagnostics) {
+        List<Diagnostic<? extends JavaFileObject>> collected = diagnostics.getDiagnostics();
+        List<CompilerDiagnostic> result = new ArrayList<>(collected.size());
+        for (Diagnostic<? extends JavaFileObject> diagnostic : collected) {
+            result.add(new CompilerDiagnostic(diagnostic.getKind(),
+                    diagnostic.getSource() == null ? "" : diagnostic.getSource().getName(),
+                    diagnostic.getLineNumber(), diagnostic.getColumnNumber(), diagnostic.getPosition(),
+                    diagnostic.getMessage(Locale.ROOT)));
+        }
+        return result;
+    }
+
+    private static String formatDiagnostics(List<CompilerDiagnostic> diagnostics, String output) {
         StringBuilder message = new StringBuilder();
-        for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
-            if (diagnostic.getSource() != null) {
-                message.append(diagnostic.getSource().getName()).append(':')
-                        .append(diagnostic.getLineNumber()).append(':').append(diagnostic.getColumnNumber()).append(": ");
+        for (CompilerDiagnostic diagnostic : diagnostics) {
+            if (!diagnostic.source().isEmpty()) {
+                message.append(diagnostic.source()).append(':')
+                        .append(diagnostic.line()).append(':').append(diagnostic.column()).append(": ");
             }
-            message.append(diagnostic.getKind()).append(": ")
-                    .append(diagnostic.getMessage(Locale.ROOT)).append('\n');
+            message.append(diagnostic.kind()).append(": ")
+                    .append(diagnostic.message()).append('\n');
         }
         if (!output.isBlank()) message.append(output);
         return message.isEmpty() ? "The Java compiler failed without diagnostics." : message.toString().stripTrailing();

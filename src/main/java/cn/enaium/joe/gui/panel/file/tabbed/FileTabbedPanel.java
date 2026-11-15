@@ -22,6 +22,7 @@ import cn.enaium.joe.util.JMenuUtil;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.gui.editor.DraftSupport;
 import cn.enaium.joe.gui.editor.EditorDraft;
+import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ClassTabPanel;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -62,6 +63,18 @@ public class FileTabbedPanel extends JTabbedPane {
             addCloseItem(menu, "popup.tabbed.closeAllRight", 3);
             return menu;
         }, () -> getSelectedComponent() != null);
+    }
+
+    @Override
+    public void insertTab(String title, Icon icon, Component component, String tip, int index) {
+        super.insertTab(title, icon, component, tip, index);
+        ClassTabPanel.refreshTabTitles(this);
+    }
+
+    @Override
+    public void removeTabAt(int index) {
+        super.removeTabAt(index);
+        ClassTabPanel.refreshTabTitles(this);
     }
 
     private void addCloseItem(JPopupMenu menu, String key, int mode) {
@@ -115,6 +128,7 @@ public class FileTabbedPanel extends JTabbedPane {
 
     public void refreshDraftIndicators() {
         refreshIndicators(this);
+        ClassTabPanel.refreshTabTitles(this);
     }
 
     private static boolean refreshIndicators(Component root) {
@@ -123,10 +137,12 @@ public class FileTabbedPanel extends JTabbedPane {
         if (root instanceof JTabbedPane tabs) {
             for (int index = 0; index < tabs.getTabCount(); index++) {
                 boolean childDirty = refreshIndicators(tabs.getComponentAt(index));
-                String title = tabs.getTitleAt(index);
-                boolean marked = title.endsWith(" *");
-                if (childDirty != marked) {
-                    tabs.setTitleAt(index, childDirty ? title + " *" : title.substring(0, title.length() - 2));
+                if (!(tabs.getComponentAt(index) instanceof ClassTabPanel)) {
+                    String title = tabs.getTitleAt(index);
+                    boolean marked = title.endsWith(" *");
+                    if (childDirty != marked) {
+                        tabs.setTitleAt(index, childDirty ? title + " *" : title.substring(0, title.length() - 2));
+                    }
                 }
                 dirty |= childDirty;
             }

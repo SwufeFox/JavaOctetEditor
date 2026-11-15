@@ -34,6 +34,8 @@ import cn.enaium.joe.gui.editor.EditorDraft;
 import cn.enaium.joe.gui.editor.DraftSupport;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.jar.ArchiveSnapshot;
+import cn.enaium.joe.util.compiler.CompileError;
+import cn.enaium.joe.util.compiler.CompilerDiagnostic;
 import javax.swing.*;
 
 import java.awt.*;
@@ -105,6 +107,25 @@ public class ASMifierTablePanel extends ClassNodeTabPanel implements EditorDraft
                 : expected != null && !matchesDisplayedClass() ? "draft.classStale" : "source.exportHint"));
     }
 
+    private void reportCompilationFailure(Throwable failure, int request, long revision,
+                                          int prefixLength, int contentLength, String sourceName) {
+        if (request != generation || !current() || !isDisplayable()) return;
+        CompileError error = CompileError.from(failure);
+        if (error == null) {
+            MessageUtil.error(failure);
+            return;
+        }
+        List<CompilerDiagnostic> diagnostics = error.getDiagnostics().stream().map(diagnostic -> {
+            long position = diagnostic.position() - prefixLength;
+            boolean inSnippet = position >= 0 && position <= contentLength;
+            return new CompilerDiagnostic(diagnostic.kind(), sourceName,
+                    inSnippet ? diagnostic.line() - 3 : -1, inSnippet ? diagnostic.column() : -1,
+                    inSnippet ? position : -1, diagnostic.message());
+        }).toList();
+        codeAreaPanel.showCompilationFailure(new CompileError(error.getMessage(), error, diagnostics),
+                state.revision() == revision);
+    }
+
     public CompletableFuture<Boolean> saveDraft() {
         return DraftSupport.onEdt(() -> {
             if (pendingSave != null && !pendingSave.isDone()) return pendingSave;
@@ -120,14 +141,19 @@ public class ASMifierTablePanel extends ClassNodeTabPanel implements EditorDraft
             String content = codeAreaPanel.getTextArea().getText();
             String className = "ASMifier" + Integer.toHexString(getClassNode().getInternalName().hashCode())
                     + Integer.toHexString(content.hashCode());
-            String source = "import org.objectweb.asm.*; public class " + className + " implements Opcodes {"
-                    + "public static byte[] dump() throws Exception {" + content + "return classWriter.toByteArray();}}";
+            String prefix = "import org.objectweb.asm.*;\npublic class " + className + " implements Opcodes {\n"
+                    + "public static byte[] dump() throws Exception {\n";
+            String source = prefix + content + "\nreturn classWriter.toByteArray();\n}\n}\n";
+            long revision = state.revision();
+            String sourceName = getClassNode().getInternalName() + ".class / " + LangUtil.i18n("class.tab.visitorEdit");
             Map<String, byte[]> classPath = new LinkedHashMap<>();
             for (ClassNode node : owner.getClasses()) classPath.put(node.getCanonicalName(), node.getClassBytes().clone());
             int request = ++generation;
             save.setEnabled(false);
+            codeAreaPanel.clearDiagnostics();
             CompletableFuture<Boolean> result = pendingSave = new CompletableFuture<>();
-            CompletableFuture<ClassNode> submitted = app.TASKS.submit(new CompileVisitorTask(className, source, classPath));
+            CompletableFuture<ClassNode> submitted = app.TASKS.submit(new CompileVisitorTask(className, source, classPath),
+                    failure -> reportCompilationFailure(failure, request, revision, prefix.length(), content.length(), sourceName));
             compilation = submitted;
             result.whenComplete((saved, failure) -> {
                 if (result.isCancelled()) submitted.cancel(true);
@@ -146,6 +172,7 @@ public class ASMifierTablePanel extends ClassNodeTabPanel implements EditorDraft
                         return;
                     }
                     getClassNode().accept(staged);
+                    codeAreaPanel.clearDiagnostics();
                     expected = getClassNode().getClassBytes().clone();
                     state.applied(content);
                     committed = true;

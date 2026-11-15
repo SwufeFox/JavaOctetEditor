@@ -49,9 +49,14 @@ public class TaskManager implements AutoCloseable {
         this.errorHandler = Objects.requireNonNull(errorHandler);
     }
 
-    public synchronized <T> CompletableFuture<T> submit(AbstractTask<T> task) {
+    public <T> CompletableFuture<T> submit(AbstractTask<T> task) {
+        return submit(task, errorHandler);
+    }
+
+    /** Reports non-cancellation failures once on EDT, after completing the task future. */
+    public synchronized <T> CompletableFuture<T> submit(AbstractTask<T> task, Consumer<Throwable> failureHandler) {
         Objects.requireNonNull(task);
-        Entry<T> entry = new Entry<>(task);
+        Entry<T> entry = new Entry<>(task, Objects.requireNonNull(failureHandler));
         if (closed) {
             entry.finish(null, new RejectedExecutionException("Task manager is closed"));
             return entry.result;
@@ -100,6 +105,7 @@ public class TaskManager implements AutoCloseable {
 
     private final class Entry<T> {
         private final AbstractTask<T> task;
+        private final Consumer<Throwable> failureHandler;
         private final CompletableFuture<T> result = new CompletableFuture<>() {
             @Override
             public boolean cancel(boolean mayInterruptIfRunning) {
@@ -125,8 +131,9 @@ public class TaskManager implements AutoCloseable {
         private final FutureTask<T> worker;
         private boolean running;
 
-        private Entry(AbstractTask<T> task) {
+        private Entry(AbstractTask<T> task, Consumer<Throwable> failureHandler) {
             this.task = task;
+            this.failureHandler = failureHandler;
             worker = new FutureTask<>(task::get) {
                 @Override
                 public void run() {
@@ -189,7 +196,14 @@ public class TaskManager implements AutoCloseable {
                     result.complete(value);
                 } else {
                     result.completeExceptionally(error);
-                    if (!(error instanceof CancellationException) && !closed) errorHandler.accept(error);
+                    if (!(error instanceof CancellationException) && !closed) {
+                        try {
+                            failureHandler.accept(error);
+                        } catch (Throwable reportingFailure) {
+                            if (reportingFailure != error) reportingFailure.addSuppressed(error);
+                            errorHandler.accept(reportingFailure);
+                        }
+                    }
                 }
             };
             if (failure instanceof CancellationException && SwingUtilities.isEventDispatchThread()) completion.run();

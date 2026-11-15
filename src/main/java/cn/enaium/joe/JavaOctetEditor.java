@@ -225,9 +225,7 @@ public class JavaOctetEditor {
         setJar(loaded);
         archiveSource = file.getAbsoluteFile();
         outputDestination = null;
-        var recent = CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue();
-        recent.remove(archiveSource.getAbsolutePath());
-        recent.add(archiveSource.getAbsolutePath());
+        CONFIG.getByClass(ApplicationConfig.class).loadRecent.remember(archiveSource.toPath());
         refreshDocumentPresentation();
         notifyStatus(LangUtil.i18n("document.opened", archiveSource.getAbsolutePath()));
     }

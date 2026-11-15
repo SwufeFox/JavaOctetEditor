@@ -30,6 +30,8 @@ import java.awt.event.HierarchyEvent;
 import javax.swing.event.ChangeListener;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * @author Enaium
@@ -47,6 +49,7 @@ public class ClassTabPanel extends JPanel {
     public final ClassNode classNode;
     protected final JTabbedPane jTabbedPane;
     private final Jar owner;
+    private final JTextField entryPath = new JTextField();
     private final boolean[] invalidated = {true, true, true, true};
     private JTabbedPane outerTabs;
     private boolean synchronizingSelection;
@@ -56,6 +59,15 @@ public class ClassTabPanel extends JPanel {
         super(new BorderLayout());
         this.classNode = classNode;
         owner = JavaOctetEditor.getInstance().getJar();
+        JPanel header = new JPanel(new BorderLayout(8, 0));
+        header.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+        entryPath.setEditable(false);
+        entryPath.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+        entryPath.setOpaque(false);
+        entryPath.getAccessibleContext().setAccessibleName(LangUtil.i18n("entry.archivePath"));
+        refreshEntryPath();
+        header.add(entryPath, BorderLayout.CENTER);
+        add(header, BorderLayout.NORTH);
         jTabbedPane = new JTabbedPane();
         jTabbedPane.setTabPlacement(JTabbedPane.BOTTOM);
         jTabbedPane.addTab(LangUtil.i18n("class.tab.bytecodeView"), new JPanel());
@@ -93,8 +105,45 @@ public class ClassTabPanel extends JPanel {
     }
 
     public void update(boolean forced) {
+        refreshEntryPath();
         Arrays.fill(invalidated, true);
         refreshSelectedView();
+    }
+
+    public String getEntryPath() {
+        return classNode.getInternalName() + ".class";
+    }
+
+    private void refreshEntryPath() {
+        String path = getEntryPath();
+        if (!path.equals(entryPath.getText())) {
+            entryPath.setText(path);
+            entryPath.setCaretPosition(0);
+            entryPath.setToolTipText(path);
+        }
+    }
+
+    /** Refreshes identity and draft presentation without invalidating any editor views. */
+    public static void refreshTabTitles(JTabbedPane tabs) {
+        Map<String, Integer> simpleNames = new HashMap<>();
+        for (int index = 0; index < tabs.getTabCount(); index++) {
+            if (tabs.getComponentAt(index) instanceof ClassTabPanel panel) {
+                simpleNames.merge(panel.classNode.getSimpleName(), 1, Integer::sum);
+            }
+        }
+        for (int index = 0; index < tabs.getTabCount(); index++) {
+            if (!(tabs.getComponentAt(index) instanceof ClassTabPanel panel)) continue;
+            panel.refreshEntryPath();
+            boolean removed = !panel.live();
+            String title = ClassTabTitle.format(panel.classNode.getInternalName(),
+                    simpleNames.get(panel.classNode.getSimpleName()) > 1,
+                    LangUtil.i18n("class.tab.defaultPackage"),
+                    removed ? LangUtil.i18n("draft.removed") : null, DraftSupport.hasDrafts(panel));
+            if (!title.equals(tabs.getTitleAt(index))) tabs.setTitleAt(index, title);
+            String tooltip = panel.getEntryPath();
+            if (removed) tooltip += " — " + LangUtil.i18n("draft.classRemoved");
+            if (!tooltip.equals(tabs.getToolTipTextAt(index))) tabs.setToolTipTextAt(index, tooltip);
+        }
     }
 
     private boolean live() {
@@ -159,11 +208,6 @@ public class ClassTabPanel extends JPanel {
             if (!live && !DraftSupport.hasDrafts(panel)) {
                 tabs.removeTabAt(index);
             } else {
-                String title = panel.classNode.getSimpleName();
-                if (!live) title += " (" + LangUtil.i18n("draft.removed") + ")";
-                tabs.setTitleAt(index, title + (DraftSupport.hasDrafts(panel) ? " *" : ""));
-                tabs.setToolTipTextAt(index, live ? panel.classNode.getInternalName() + ".class"
-                        : LangUtil.i18n("draft.classRemoved"));
                 panel.update(false);
             }
         }
@@ -171,6 +215,7 @@ public class ClassTabPanel extends JPanel {
             ClassTabPanel panel = entry.getValue().get();
             return panel == null || tabs.indexOfComponent(panel) < 0;
         });
+        refreshTabTitles(tabs);
     }
 
     static {
@@ -181,6 +226,7 @@ public class ClassTabPanel extends JPanel {
                 if (panel != null) {
                     internalName2panel.put(panel.classNode.getInternalName(), reference);
                     panel.update(false);
+                    if (panel.outerTabs != null) refreshTabTitles(panel.outerTabs);
                     var app = JavaOctetEditor.getInstance();
                     app.EVENTS.call(new cn.enaium.joe.util.event.events.FileTabbedSelectEvent(app.fileTabbedPanel.getSelectedComponent()));
                 }

@@ -39,11 +39,11 @@ public class DecompileTask extends AbstractTask<String> {
     private final String internalName;
     private final Function<Jar, IDecompiler> decompilerFactory;
 
-    public DecompileTask(ArchiveSnapshot baseline, String internalName) {
+    public DecompileTask(ArchiveSnapshot baseline, String internalName, DecompileService.Service backend) {
         super("Decompile " + internalName);
         this.baseline = Objects.requireNonNull(baseline);
         this.internalName = Objects.requireNonNull(internalName);
-        this.decompilerFactory = DecompileService.captureFactory();
+        this.decompilerFactory = DecompileService.captureFactory(backend);
     }
 
     @Override

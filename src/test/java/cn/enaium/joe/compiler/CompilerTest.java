@@ -119,16 +119,25 @@ class CompilerTest {
         compiler.addSource("Broken", "public class Broken { }");
         assertNull(compiler.compile());
         assertFalse(compiler.getClasses().isEmpty());
-        compiler.addSource("Broken", """
+        String brokenSource = """
                 public class Broken {
                     public int value() { return missingSymbol; }
                 }
-                """);
+                """;
+        compiler.addSource("Broken", brokenSource);
         CompileError error = compiler.compile();
         assertNotNull(error);
         assertTrue(error.getMessage().contains("Broken.java:2:"), error.getMessage());
         assertTrue(error.getMessage().contains("missingSymbol"), error.getMessage());
         assertTrue(diagnostics.contains(Diagnostic.Kind.ERROR));
+        var location = error.getDiagnostics().stream()
+                .filter(diagnostic -> diagnostic.kind() == Diagnostic.Kind.ERROR).findFirst().orElseThrow();
+        assertTrue(location.source().endsWith("Broken.java"));
+        assertEquals(2, location.line());
+        assertEquals(brokenSource.indexOf("missingSymbol"), location.position());
+        int lineStart = brokenSource.lastIndexOf('\n', (int) location.position()) + 1;
+        assertEquals(location.position() - lineStart + 1, location.column());
+        assertThrows(UnsupportedOperationException.class, () -> error.getDiagnostics().clear());
         assertTrue(compiler.getClasses().isEmpty());
         compiler.addSource("Broken", "public class Broken { public static int value() { return 42; } }");
         assertNull(compiler.compile());

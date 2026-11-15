@@ -170,7 +170,7 @@ public class FileTree extends JTree {
         }
         JComponent panel = classNode == null
                 ? new FileTablePane((FileTreeNode) target.getLastPathComponent()) : new ClassTabPanel(classNode);
-        String title = classNode == null ? path.substring(path.lastIndexOf('/') + 1) : classNode.getSimpleName();
+        String title = classNode == null ? path.substring(path.lastIndexOf('/') + 1) : "";
         tabs.addTab(title, panel);
         tabs.setToolTipTextAt(tabs.indexOfComponent(panel), path);
         tabs.setSelectedComponent(panel);

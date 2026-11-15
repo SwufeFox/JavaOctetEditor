@@ -5,6 +5,12 @@ import cn.enaium.joe.dialog.QuickOpenDialog;
 import cn.enaium.joe.gui.EntryActions;
 import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.DecompileTabPanel;
 import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ASMifierTablePanel;
+import cn.enaium.joe.gui.editor.EditorDraft;
+import cn.enaium.joe.gui.panel.CodeAreaPanel;
+import cn.enaium.joe.gui.panel.menu.file.LoadRecentMenu;
+import cn.enaium.joe.service.DecompileService;
+import cn.enaium.joe.util.compiler.CompilerDiagnostic;
+import cn.enaium.joe.util.config.extend.ApplicationConfig;
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.LangUtil;
@@ -21,6 +27,7 @@ import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -54,21 +61,45 @@ public final class DesktopSmoke {
                 Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
                 editor.window.setSize(Math.min(1100, screen.width - 80), Math.min(760, screen.height - 80));
                 editor.window.setLocationRelativeTo(null);
+                LoadRecentMenu recent = openRecentMenu();
+                check(!menuItem(recent, "menu.file.recent.empty").isEnabled(), "empty recent files menu gives guidance");
+                dismissMenus();
                 editor.requestOpenArchive(input.toFile());
                 return null;
             });
             await(() -> editor.getJar() != null, "initial archive load");
             check(edt(() -> editor.getArchiveSource().equals(input.toFile())), "source path accepted after load");
             check(!edt(() -> editor.hasArchiveChanges()), "loaded archive starts clean");
+            recentFilesExperience(input, inputBefore);
 
             edt(() -> { editor.fileTree.openEntry("demo/Sample.class"); return null; });
             Component classTab = edt(() -> editor.fileTabbedPanel.getSelectedComponent());
             screenshot("bytecode-on-open.png");
             JTabbedPane classViews = edt(() -> find(classTab, JTabbedPane.class, item -> item.getTabCount() == 4));
-            edt(() -> { classViews.setSelectedIndex(1); return null; });
+            edt(() -> {
+                classViews.setSelectedIndex(1);
+                JButton cancel = find(classTab, JButton.class, item -> item.getText().equals(LangUtil.i18n("source.cancel")));
+                check(cancel != null && cancel.isEnabled(), "source decompilation can be cancelled locally");
+                cancel.doClick(0);
+                return null;
+            });
             DecompileTabPanel sourcePanel = edt(() -> find(classTab, DecompileTabPanel.class, item -> true));
             RSyntaxTextArea source = edt(() -> find(sourcePanel, RSyntaxTextArea.class, item -> true));
-            await(() -> source.isEditable() && source.getText().contains("class Sample"), "source decompilation");
+            await(() -> find(sourcePanel, JLabel.class, item -> LangUtil.i18n("source.cancelled").equals(item.getText())) != null,
+                    "cancelled source has a recovery action");
+            JButton retry = edt(() -> find(sourcePanel, JButton.class, item -> item.getText().equals(LangUtil.i18n("source.retry"))));
+            check(edt(retry::isEnabled), "retry is enabled after cancellation");
+            screenshot("source-cancelled.png");
+            edt(() -> { retry.doClick(0); return null; });
+            await(() -> source.isEditable() && source.getText().contains("class Sample") && retry.isEnabled(), "source retry without reopening tab");
+            JComboBox<?> backend = edt(() -> find(sourcePanel, JComboBox.class,
+                    item -> item.getSelectedItem() instanceof DecompileService.Service));
+            edt(() -> { backend.setSelectedItem(DecompileService.Service.CFR); return null; });
+            await(() -> retry.isEnabled() && source.isEditable() && source.getText().contains("class Sample"), "source backend switch");
+            check(edt(() -> find(classTab, JTextField.class, item -> !item.isEditable()
+                    && item.getText().equals("demo/Sample.class"))) != null, "class header exposes full path");
+            String invalidSource = "package demo;\npublic class Sample {\n    public static int value() {\n        return ;\n    }\n}\n";
+            compilationFailureExperience(sourcePanel, sourcePanel, invalidSource, invalidSource.indexOf("return"), "source-diagnostics.png");
             String validSource = "package demo; public class Sample { public static int value() { return 9; } }";
             CompletableFuture<Boolean> capturedCompile = edt(() -> {
                 source.setText("package demo; public class Sample { public static int value() { return 7; } }");
@@ -76,6 +107,7 @@ public final class DesktopSmoke {
                 source.setText(validSource);
                 return pending;
             });
+            check(edt(() -> !backend.isEnabled()), "backend changes cannot replace a newer source draft");
             check(capturedCompile.get(30, TimeUnit.SECONDS), "captured source compilation succeeds");
             check(edt(() -> sourcePanel.hasDraft() && source.getText().equals(validSource)), "newer source text survives background compile");
             check(value(edt(() -> editor.getJar().getClassNode("demo/Sample").getClassBytes().clone())) == 7, "compile applies captured source only");
@@ -101,7 +133,12 @@ public final class DesktopSmoke {
             edt(() -> { source.setText(validSource); classViews.setSelectedIndex(2); return null; });
             ASMifierTablePanel visitorPanel = edt(() -> find(classTab, ASMifierTablePanel.class, item -> true));
             RSyntaxTextArea visitor = edt(() -> find(visitorPanel, RSyntaxTextArea.class, item -> true));
+            await(visitor::isEditable, "visitor editor initialization");
             String visitorBaseline = edt(visitor::getText);
+            String invalidVisitor = "ClassWriter classWriter = new ClassWriter(0);\nmissingSymbol();\n";
+            compilationFailureExperience(visitorPanel, visitorPanel, invalidVisitor,
+                    invalidVisitor.indexOf("missingSymbol"), "visitor-diagnostics.png");
+            edt(() -> { visitor.setText(visitorBaseline); return null; });
             String visitorDraft = visitorBaseline + "\n// keep this visitor draft";
             edt(() -> {
                 visitor.setText(visitorDraft);
@@ -120,6 +157,7 @@ public final class DesktopSmoke {
             edt(() -> { editor.fileTree.openEntry("config/app.properties"); return null; });
             check(edt(() -> editor.fileTabbedPanel.getTabCount()) == opened, "resource navigation reuses tab");
             RSyntaxTextArea resource = edt(() -> find(resourceTab, RSyntaxTextArea.class, item -> true));
+            searchExperience(resourceTab, resource);
             edt(() -> { resource.setText("answer=9\n"); return null; });
             check(edt(() -> new String(editor.getJar().getResource("config/app.properties"), StandardCharsets.UTF_8).equals("answer=1\n")), "draft does not mutate resource before apply");
             check(edt(() -> cn.enaium.joe.gui.editor.DraftSupport.hasDrafts(resourceTab)), "edited resource has an unapplied draft");
@@ -144,6 +182,15 @@ public final class DesktopSmoke {
             pressKey(query, KeyEvent.VK_ENTER, false);
             await(() -> !quick.isShowing(), "quick open selection");
             check(edt(() -> editor.fileTabbedPanel.getTabCount()) == opened, "quick open selects the matching class");
+            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).contains("demo")
+                    && editor.fileTabbedPanel.getTitleAt(1).contains("other")), "same-name class tabs display their packages");
+            fireCloseTab();
+            await(() -> editor.fileTabbedPanel.getTabCount() == 1, "close colliding clean class tab");
+            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).equals("Sample *")), "closing collision restores compact dirty title");
+            edt(() -> { editor.fileTree.openEntry("other/Sample.class"); return null; });
+            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).contains("demo")
+                    && editor.fileTabbedPanel.getTitleAt(0).endsWith(" *")), "reopening collision preserves the original draft marker");
+            screenshot("same-name-tabs.png");
 
             JTextField treeFilter = edt(() -> find(editor.window.getContentPane(), JTextField.class,
                     item -> !SwingUtilities.isDescendingFrom(item, editor.fileTabbedPanel)));
@@ -180,7 +227,7 @@ public final class DesktopSmoke {
             chooseOption(2);
             check(edt(() -> editor.window.isDisplayable() && newResource.getText().equals("answer=10\n")), "attached-style close cancel keeps window and draft");
             screenshot("protected-editor.png");
-            System.out.println("DESKTOP_SMOKE_OK: lazy class views, source/visitor draft and selection preservation, load, captured source compilation, newer draft preservation, Java 8 target, Ctrl+P/Enter navigation, live filtering, Ctrl+W draft protection, resource import/replace/delete, exact entry export, archive export/cancellation, attached-style close cancellation.");
+            System.out.println("DESKTOP_SMOKE_OK: source/visitor diagnostic navigation and stale guards, editor search feedback and shortcuts, decompiler cancel/retry/backend switch, class path headers and collision titles, ordered recent files and missing-entry cleanup, captured compilation, newer drafts, Java 8 target, navigation/filtering, guarded close, resource actions and export.");
         } finally {
             edt(() -> {
                 if (editor != null) editor.shutdown();
@@ -188,6 +235,126 @@ public final class DesktopSmoke {
                 return null;
             });
         }
+    }
+
+    private static LoadRecentMenu openRecentMenu() {
+        for (int index = 0; index < editor.window.getJMenuBar().getMenuCount(); index++) {
+            JMenu menu = editor.window.getJMenuBar().getMenu(index);
+            for (Component child : menu.getMenuComponents()) if (child instanceof LoadRecentMenu recent) {
+                menu.doClick(0);
+                recent.doClick(0);
+                return recent;
+            }
+        }
+        throw new AssertionError("Recent files menu missing");
+    }
+
+    private static JMenuItem menuItem(JMenu menu, String key) {
+        for (Component child : menu.getMenuComponents()) if (child instanceof JMenuItem item
+                && item.getText().equals(LangUtil.i18n(key))) return item;
+        throw new AssertionError("Menu action missing: " + key);
+    }
+
+    private static void dismissMenus() {
+        MenuSelectionManager.defaultManager().clearSelectedPath();
+        for (int index = 0; index < editor.window.getJMenuBar().getMenuCount(); index++) {
+            JMenu menu = editor.window.getJMenuBar().getMenu(index);
+            for (Component child : menu.getMenuComponents()) if (child instanceof JMenu submenu) submenu.setPopupMenuVisible(false);
+            menu.setPopupMenuVisible(false);
+        }
+    }
+
+    private static void recentFilesExperience(Path input, byte[] bytes) throws Exception {
+        Path other = evidence.resolve("other.jar");
+        Path missing = evidence.resolve("missing.jar");
+        Files.write(other, bytes);
+        Files.write(missing, bytes);
+        edt(() -> { editor.requestOpenArchive(other.toFile()); return null; });
+        await(() -> other.toFile().equals(editor.getArchiveSource()), "second recent archive");
+        edt(() -> { editor.requestOpenArchive(missing.toFile()); return null; });
+        await(() -> missing.toFile().equals(editor.getArchiveSource()), "missing-entry fixture load");
+        Files.delete(missing);
+        edt(() -> { editor.requestOpenArchive(input.toFile()); return null; });
+        await(() -> input.toFile().equals(editor.getArchiveSource()), "reopen most recent archive");
+        check(edt(() -> editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue())
+                .equals(List.of(input.toString(), missing.toString(), other.toString())), "recent files are unique and newest first");
+        edt(() -> {
+            LoadRecentMenu menu = openRecentMenu();
+            check(input.toString().equals(menu.getItem(0).getToolTipText()), "recent menu exposes latest full path first");
+            menuItem(menu, "menu.file.recent.removeMissing").doClick(0);
+            dismissMenus();
+            return null;
+        });
+        await(() -> editor.CONFIG.getByClass(ApplicationConfig.class).loadRecent.getValue()
+                .equals(List.of(input.toString(), other.toString())), "recent cleanup removes missing shortcuts");
+        check(Files.exists(input) && Files.exists(other), "recent cleanup preserves files");
+    }
+
+    private static JList<?> diagnosticList(Component root) {
+        return find(root, JList.class, list -> list.getModel().getSize() > 0
+                && list.getModel().getElementAt(0) instanceof CompilerDiagnostic);
+    }
+
+    private static void compilationFailureExperience(Component panel, EditorDraft draft, String invalid,
+                                                     int expectedPosition, String filename) throws Exception {
+        RSyntaxTextArea text = edt(() -> find(panel, RSyntaxTextArea.class, item -> true));
+        byte[] before = edt(() -> editor.getJar().getClassNode("demo/Sample").getClassBytes().clone());
+        CompletableFuture<Boolean> applied = edt(() -> { text.setText(invalid); return draft.saveDraft(); });
+        check(!applied.get(30, TimeUnit.SECONDS), "invalid source is not applied");
+        await(() -> diagnosticList(panel) != null && diagnosticList(panel).isShowing(), "inline compilation diagnostics");
+        JList<?> list = edt(() -> diagnosticList(panel));
+        CompilerDiagnostic first = edt(() -> (CompilerDiagnostic) list.getModel().getElementAt(0));
+        check(first.kind() == javax.tools.Diagnostic.Kind.ERROR && first.position() == expectedPosition, "diagnostic addresses displayed source");
+        check(edt(() -> {
+            for (Window window : Window.getWindows()) if (window instanceof JDialog dialog && dialog.isShowing()
+                    && dialog.getTitle().equals(LangUtil.i18n("error"))) return false;
+            return true;
+        }), "expected compilation failure keeps editing in the source window");
+        edt(() -> { list.setSelectedIndex(0); return null; });
+        pressKey(list, KeyEvent.VK_ENTER, false);
+        check(edt(text::getCaretPosition) == expectedPosition, "diagnostic opens exact source location");
+        screenshot(filename);
+        edt(() -> { text.append("\n// newer text"); return null; });
+        check(!edt(list::isEnabled), "editing invalidates old diagnostic navigation");
+        check(edt(draft::hasDraft), "failed compile preserves the editor draft");
+        check(Arrays.equals(before, edt(() -> editor.getJar().getClassNode("demo/Sample").getClassBytes().clone())),
+                "failed compile preserves archive bytecode");
+    }
+
+    private static void searchExperience(Component panel, RSyntaxTextArea text) throws Exception {
+        String baseline = edt(text::getText);
+        edt(() -> { text.setText("alpha=1\nalpha=2\n"); text.setCaretPosition(text.getDocument().getLength()); return null; });
+        pressKey(text, KeyEvent.VK_F, true);
+        CodeAreaPanel code = edt(() -> find(panel, CodeAreaPanel.class, item -> true));
+        JToolBar toolbar = edt(() -> find(code, JToolBar.class, item -> true));
+        JTextField query = edt(() -> find(toolbar, JTextField.class, item -> true));
+        edt(() -> { query.setText("alpha"); return null; });
+        pressKey(query, KeyEvent.VK_ENTER, false);
+        check(edt(text::getSelectionStart) == 0 && "alpha".equals(edt(text::getSelectedText)), "search wraps to first match");
+        pressKey(text, KeyEvent.VK_F3, false);
+        check(edt(text::getSelectionStart) == 8, "F3 finds the next occurrence");
+        int selected = edt(text::getSelectionStart);
+        edt(() -> {
+            find(toolbar, JCheckBox.class, item -> item.getText().equals(LangUtil.i18n("editor.search.regex"))).setSelected(true);
+            query.setText("[");
+            return null;
+        });
+        pressKey(query, KeyEvent.VK_ENTER, false);
+        check(edt(() -> find(code, JLabel.class, item -> item.isShowing() && item.getText() != null
+                && item.getText().startsWith(LangUtil.i18n("editor.search.invalidRegex", "")))) != null, "invalid regex explains the problem inline");
+        check(edt(text::getSelectionStart) == selected, "invalid regex preserves editor selection");
+        screenshot("editor-search.png");
+        edt(() -> {
+            find(toolbar, JCheckBox.class, item -> item.getText().equals(LangUtil.i18n("editor.search.regex"))).setSelected(false);
+            query.setText("missing key");
+            return null;
+        });
+        pressKey(query, KeyEvent.VK_ENTER, false);
+        check(edt(() -> find(code, JLabel.class, item -> LangUtil.i18n("editor.search.noMatches").equals(item.getText()))) != null,
+                "no-match feedback is visible");
+        pressKey(query, KeyEvent.VK_ESCAPE, false);
+        check(!edt(toolbar::isVisible), "Escape closes search from its input");
+        edt(() -> { text.setText(baseline); return null; });
     }
 
     private static CompletableFuture<Boolean> exportThroughChooser(Path destination, boolean approve) throws Exception {

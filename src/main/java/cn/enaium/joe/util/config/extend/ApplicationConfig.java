@@ -28,7 +28,6 @@ import javax.swing.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.EnumSet;
-import java.util.HashSet;
 
 /**
  * @author Enaium
@@ -40,7 +39,7 @@ public class ApplicationConfig extends Config {
     public ModeValue<FileTree.PackagePresentation> packagePresentation = new ModeValue<>("Package Presentation", FileTree.PackagePresentation.HIERARCHICAL, "Package Mode", EnumSet.allOf(FileTree.PackagePresentation.class));
     public EnableValue compactMiddlePackage = new EnableValue("Compact Middle Package", true, "Only Hierarchical Mode");
     @NoUI
-    public final StringSetValue loadRecent = new StringSetValue("Load Recent", new HashSet<>(), "");
+    public final RecentFilesValue loadRecent = new RecentFilesValue("Load Recent", "");
     public IntegerValue scale = new IntegerValue("Scale", 0, "UI scale,it doesn't scale if value 0");
 
     public ConfigValue<KeymapConfig> keymap = new ConfigValue<>(new KeymapConfig(), "The setting of key setting.");

@@ -128,13 +128,19 @@ Tools inspect and compile bytecode without executing archive classes. Annotation
 
 Open a JAR, ZIP, class file, or class directory from File, the recent list, or by dropping it into the window. The tree filter updates as you type. Clear it with Escape. Quick open searches class and resource names together, accepts dotted class names and abbreviations, and displays full paths to distinguish entries with the same filename. Opening an entry again selects its existing tab.
 
-Class views initialize when selected and reuse their editors when switching views or tabs. Source and visitor drafts, caret positions, and selections remain available while other views are active.
+The recent files menu keeps the 20 latest successfully opened paths, newest first. Opening a path again moves it to the top. Remove missing entries checks shortcuts in the background and removes records for files that no longer exist; it preserves the actual files and any entries opened again while the check is running.
+
+Class views initialize when selected and reuse their editors when switching views or tabs. Source and visitor drafts, caret positions, and selections remain available while other views are active. A selectable class header exposes the full archive path. Class tabs with the same simple name include their packages; closing the collision restores compact titles.
 
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+O | Open an archive or class |
 | Ctrl+P | Quick open a class or resource |
 | Ctrl+L | Focus the tree filter |
+| Ctrl+F | Find in the current editor |
+| F3 / Shift+F3 | Find the next / previous match, wrapping at the document boundary |
+| Enter / Shift+Enter in the find bar | Find the next / previous match |
+| Escape in the find bar or editor | Close the find bar and return to the editor |
 | Ctrl+S (configurable) | Apply the current source, visitor, or text-resource draft in memory |
 | Ctrl+Shift+S | Export the archive |
 | Ctrl+W | Close the current tab, checking for drafts |
@@ -142,6 +148,10 @@ Class views initialize when selected and reuse their editors when switching view
 ### Edit and export
 
 Bytecode view is read-only. Decompile view edits Java source; Visitor edit compiles ASM visitor code; Info edit updates class metadata. Source compilation resolves the archive's real dependencies, preserves the original Java target, and commits generated classes together. Failed or cancelled compilation keeps the previous bytecode and your draft.
+
+Source and visitor compilation failures appear below the editor. Errors come first; warnings start collapsed, and technical details can be expanded. Click a diagnostic or select it and press Enter to jump to its source location. Editing the buffer marks those locations stale until the next compilation, so earlier results cannot move the caret into unrelated newer text.
+
+The source header offers a decompiler choice, cancellation and retry without closing the class tab. Backend selection applies to that source view and uses its captured configuration. Apply an outstanding source draft before retrying or changing the backend. Find supports literal or regular-expression queries, case matching, match counts, circular navigation, and explicit feedback for missing matches or invalid expressions.
 
 Text resources have an Apply action. Applying changes updates the in-memory archive; export writes them to disk. Tab markers identify unapplied drafts, while the window title and status distinguish those drafts from applied changes that have not been exported. Closing tabs offers Apply / Discard / Cancel. Opening another archive or closing the window also offers export when the current archive has changes. Edits made while loading or exporting remain protected.
 
@@ -187,4 +197,4 @@ Run the desktop journeys in a graphical session:
 
 This explicit task builds the runnable JAR and exercises real Swing load, source compilation, newer-draft preservation, keyboard navigation, guarded tab/window close, resource import/replace/delete, single-file export, and archive export/cancellation. Each run uses a fresh directory under `build/desktop-smoke/` for fixtures, application settings, exported files, and screenshots. The smoke source is in `src/smoke/java/`; it runs separately from the headless `test` and default `build` tasks.
 
-The smoke checks dispatch Swing shortcut bindings to the editor and render screenshots from its own window components. This keeps test input and evidence independent of other foreground applications. Class-view journeys also check deferred initialization and source/visitor draft and selection preservation.
+The smoke checks dispatch Swing shortcut bindings to the editor and render screenshots from its own window components. This keeps test input and evidence independent of other foreground applications. Journeys cover source/visitor diagnostic navigation and stale-location guards, find feedback and shortcuts, decompiler cancellation/retry/backend selection, class path headers and colliding tab titles, recent-file ordering and cleanup, and source/visitor draft and selection preservation.

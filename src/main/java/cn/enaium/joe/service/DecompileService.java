@@ -70,8 +70,12 @@ public class DecompileService {
 
     /** Captures desktop options now; bind an independent archive on the worker thread. */
     public static Function<Jar, IDecompiler> captureFactory() {
-        JavaOctetEditor editor = JavaOctetEditor.getInstance();
-        Service backend = editor.CONFIG.getByClass(ApplicationConfig.class).decompilerMode.getValue();
+        return captureFactory(JavaOctetEditor.getInstance().CONFIG
+                .getByClass(ApplicationConfig.class).decompilerMode.getValue());
+    }
+
+    public static Function<Jar, IDecompiler> captureFactory(Service backend) {
+        Objects.requireNonNull(backend, "Decompiler backend");
         Function<Jar, IDecompiler> factory = switch (backend) {
             case VineFlower -> {
                 var properties = VineFlowerDecompiler.customProperties.getValue();

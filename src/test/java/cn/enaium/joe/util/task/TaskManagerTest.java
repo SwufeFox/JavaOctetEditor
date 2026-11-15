@@ -54,6 +54,45 @@ class TaskManagerTest {
     }
 
     @Test
+    void taskSpecificFailureReporterKeepsFailureAndReplacesDefaultDialog() throws Exception {
+        CompletableFuture<Throwable> reported = new CompletableFuture<>();
+        Queue<Throwable> defaults = new ConcurrentLinkedQueue<>();
+        AtomicBoolean onEdt = new AtomicBoolean();
+        IllegalArgumentException problem = new IllegalArgumentException("invalid submitted source");
+        try (TaskManager manager = new TaskManager(Executors.newSingleThreadExecutor(), defaults::add)) {
+            CompletableFuture<Object> result = manager.submit(new AbstractTask<>("Compile") {
+                @Override public Object get() { throw problem; }
+            }, failure -> {
+                onEdt.set(SwingUtilities.isEventDispatchThread());
+                reported.complete(failure);
+            });
+
+            assertSame(problem, assertThrows(ExecutionException.class,
+                    () -> result.get(5, TimeUnit.SECONDS)).getCause());
+            assertSame(problem, reported.get(5, TimeUnit.SECONDS));
+            assertTrue(onEdt.get());
+            assertTrue(defaults.isEmpty());
+        }
+    }
+
+    @Test
+    void failedCustomReporterFallsBackWithOriginalFailureAvailable() throws Exception {
+        CompletableFuture<Throwable> fallback = new CompletableFuture<>();
+        IllegalArgumentException problem = new IllegalArgumentException("compile failed");
+        IllegalStateException reportingFailure = new IllegalStateException("diagnostics failed");
+        try (TaskManager manager = new TaskManager(Executors.newSingleThreadExecutor(), fallback::complete)) {
+            CompletableFuture<Object> result = manager.submit(new AbstractTask<>("Compile") {
+                @Override public Object get() { throw problem; }
+            }, failure -> { throw reportingFailure; });
+
+            assertSame(problem, assertThrows(ExecutionException.class,
+                    () -> result.get(5, TimeUnit.SECONDS)).getCause());
+            assertSame(reportingFailure, fallback.get(5, TimeUnit.SECONDS));
+            assertArrayEquals(new Throwable[] {problem}, reportingFailure.getSuppressed());
+        }
+    }
+
+    @Test
     void simultaneousSubmissionsReserveOneNonrepeatableTask() throws Exception {
         ExecutorService executor = Executors.newCachedThreadPool();
         ExecutorService submitters = Executors.newFixedThreadPool(2);
