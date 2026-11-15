@@ -29,17 +29,26 @@ public class Jar {
     private final Map<String, byte[]> resources = new LinkedHashMap<>();
     private final Collection<ClassNode> classView = Collections.unmodifiableCollection(classes.values());
     private final Map<String, byte[]> resourceView = Collections.unmodifiableMap(resources);
+    private long structuralRevision;
+
+    /** Names and class wrapper identities only; never a content or commit version. */
+    public long getStructuralRevision() {
+        return structuralRevision;
+    }
 
     /**
      * @param classNode the classNode
      */
     public void putClassNode(ClassNode classNode){
         Objects.requireNonNull(classNode, "classNode");
-        classes.put(Objects.requireNonNull(classNode.getInternalName(), "internalName"), classNode);
+        String name = Objects.requireNonNull(classNode.getInternalName(), "internalName");
+        if (classes.put(name, classNode) != classNode) structuralRevision++;
     }
 
     public ClassNode removeClass(String internalName) {
-        return classes.remove(internalName);
+        ClassNode removed = classes.remove(internalName);
+        if (removed != null) structuralRevision++;
+        return removed;
     }
 
     /**
@@ -81,7 +90,9 @@ public class Jar {
      * @param value the bytes, not null
      */
     public void putResource(String path, byte[] value) {
-        resources.put(Objects.requireNonNull(path, "path"), Objects.requireNonNull(value, "value"));
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(value, "value");
+        if (resources.put(path, value) == null) structuralRevision++;
     }
 
     public void putAllResource(Map<String, byte[]> map) {
@@ -89,11 +100,13 @@ public class Jar {
             Objects.requireNonNull(path, "path");
             Objects.requireNonNull(value, "value");
         });
-        resources.putAll(map);
+        map.forEach(this::putResource);
     }
 
     public byte[] removeResource(String path) {
-        return resources.remove(path);
+        byte[] removed = resources.remove(path);
+        if (removed != null) structuralRevision++;
+        return removed;
     }
 
     /**
@@ -110,6 +123,12 @@ public class Jar {
 
     /** Reindexes renamed classes, leaving the old index intact if names collide. */
     public void refresh(){
+        boolean renamed = false;
+        for (Map.Entry<String, ClassNode> entry : classes.entrySet()) {
+            String name = Objects.requireNonNull(entry.getValue().getInternalName(), "internalName");
+            if (!entry.getKey().equals(name)) renamed = true;
+        }
+        if (!renamed) return;
         Map<String, ClassNode> refreshed = new LinkedHashMap<>(classes.size());
         for (ClassNode classNode : classes.values()) {
             String name = Objects.requireNonNull(classNode.getInternalName(), "internalName");
@@ -119,6 +138,7 @@ public class Jar {
         }
         classes.clear();
         classes.putAll(refreshed);
+        structuralRevision++;
     }
 
     public Jar copy() {

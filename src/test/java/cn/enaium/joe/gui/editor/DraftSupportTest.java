@@ -3,6 +3,10 @@ package cn.enaium.joe.gui.editor;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
+import javax.swing.text.Document;
+import javax.swing.text.PlainDocument;
+import javax.swing.undo.UndoManager;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -87,6 +91,69 @@ class DraftSupportTest {
             assertEquals(5, text.getSelectionEnd());
             assertFalse(state.isDirty());
             assertTrue(state.revision() > capturedRevision);
+        });
+    }
+
+    @Test
+    void dirtyComparisonTracksUndoRedoAcrossDocumentGapsAndBaselineChanges() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            String original = "prefix \uD83D\uDE03 middle suffix";
+            JTextArea text = new JTextArea(original);
+            DraftSupport.TextState state = new DraftSupport.TextState(text, () -> { });
+            UndoManager undo = new UndoManager();
+            text.getDocument().addUndoableEditListener(undo);
+            assertFalse(state.isDirty());
+            text.insert("temporary", 9);
+            assertTrue(state.isDirty());
+            undo.undo();
+            assertFalse(state.isDirty());
+            assertFalse(state.isDirty());
+            undo.redo();
+            assertTrue(state.isDirty());
+            state.applied(text.getText());
+            assertFalse(state.isDirty());
+            undo.undo();
+            assertTrue(state.isDirty());
+            state.applied(original);
+            assertFalse(state.isDirty());
+            assertDoesNotThrow(() -> {
+                text.getDocument().remove(10, 1);
+                text.getDocument().insertString(10, "X", null);
+            });
+            assertTrue(state.isDirty());
+            undo.undo();
+            undo.undo();
+            assertFalse(state.isDirty());
+        });
+    }
+
+    @Test
+    void replacementDocumentsInvalidateStateAndDetachOldDocument() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea text = new JTextArea("baseline");
+            AtomicInteger notifications = new AtomicInteger();
+            DraftSupport.TextState state = new DraftSupport.TextState(text, notifications::incrementAndGet);
+            Document old = text.getDocument();
+            PlainDocument replacement = new PlainDocument();
+            assertDoesNotThrow(() -> replacement.insertString(0, "different", null));
+            long initialRevision = state.revision();
+            text.setDocument(replacement);
+            assertTrue(state.revision() > initialRevision);
+            assertEquals(1, notifications.get());
+            assertTrue(state.isDirty());
+            long replacementRevision = state.revision();
+            assertDoesNotThrow(() -> old.insertString(0, "detached", null));
+            assertEquals(replacementRevision, state.revision());
+            assertEquals(1, notifications.get());
+            text.setText("baseline");
+            assertFalse(state.isDirty());
+            assertTrue(state.revision() > replacementRevision);
+            text.setDocument(new PlainDocument());
+            assertTrue(state.isDirty());
+            state.applied("");
+            assertFalse(state.isDirty());
+            text.append("new draft");
+            assertTrue(state.isDirty());
         });
     }
 

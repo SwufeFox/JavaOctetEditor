@@ -16,11 +16,17 @@
 
 package cn.enaium.joe.util.task.tasks;
 
+import cn.enaium.joe.jar.ArchiveSnapshot;
+import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.service.decompiler.IDecompiler;
 import cn.enaium.joe.service.DecompileService;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.task.AbstractTask;
 import cn.enaium.joe.util.task.Repeatable;
 import org.tinylog.Logger;
+
+import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * @author Enaium
@@ -29,20 +35,25 @@ import org.tinylog.Logger;
 @Repeatable
 public class DecompileTask extends AbstractTask<String> {
 
-    private final ClassNode classNode;
-    private final cn.enaium.joe.service.decompiler.IDecompiler decompiler;
+    private final ArchiveSnapshot baseline;
+    private final String internalName;
+    private final Function<Jar, IDecompiler> decompilerFactory;
 
-    public DecompileTask(cn.enaium.joe.jar.ArchiveSnapshot baseline, String internalName) {
+    public DecompileTask(ArchiveSnapshot baseline, String internalName) {
         super("Decompile " + internalName);
-        var archive = baseline.toJar();
-        this.classNode = java.util.Objects.requireNonNull(archive.getClassNode(internalName), "Class not found: " + internalName);
-        this.decompiler = DecompileService.captureService(archive);
+        this.baseline = Objects.requireNonNull(baseline);
+        this.internalName = Objects.requireNonNull(internalName);
+        this.decompilerFactory = DecompileService.captureFactory();
     }
 
     @Override
     public String get() {
-        Logger.info("DECOMPILE:{}", classNode.getInternalName());
-        if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("Decompilation cancelled");
+        checkCancelled();
+        Jar archive = baseline.toJar();
+        ClassNode classNode = Objects.requireNonNull(archive.getClassNode(internalName), "Class not found: " + internalName);
+        IDecompiler decompiler = decompilerFactory.apply(archive);
+        checkCancelled();
+        Logger.info("DECOMPILE:{}", internalName);
         String source = decompiler.decompile(classNode);
         setProgress(100);
         return source;

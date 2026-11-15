@@ -21,6 +21,7 @@ import cn.enaium.joe.util.event.events.FileTabbedSelectEvent;
 import cn.enaium.joe.util.JMenuUtil;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.gui.editor.DraftSupport;
+import cn.enaium.joe.gui.editor.EditorDraft;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -116,15 +117,24 @@ public class FileTabbedPanel extends JTabbedPane {
         refreshIndicators(this);
     }
 
-    private static void refreshIndicators(Container root) {
+    private static boolean refreshIndicators(Component root) {
+        if (root instanceof EditorDraft draft) return draft.hasDraft();
+        boolean dirty = false;
         if (root instanceof JTabbedPane tabs) {
             for (int index = 0; index < tabs.getTabCount(); index++) {
-                Component child = tabs.getComponentAt(index);
+                boolean childDirty = refreshIndicators(tabs.getComponentAt(index));
                 String title = tabs.getTitleAt(index);
-                if (title.endsWith(" *")) title = title.substring(0, title.length() - 2);
-                tabs.setTitleAt(index, title + (DraftSupport.hasDrafts(child) ? " *" : ""));
+                boolean marked = title.endsWith(" *");
+                if (childDirty != marked) {
+                    tabs.setTitleAt(index, childDirty ? title + " *" : title.substring(0, title.length() - 2));
+                }
+                dirty |= childDirty;
+            }
+        } else if (root instanceof Container container) {
+            for (int index = 0; index < container.getComponentCount(); index++) {
+                dirty |= refreshIndicators(container.getComponent(index));
             }
         }
-        for (Component child : root.getComponents()) if (child instanceof Container container) refreshIndicators(container);
+        return dirty;
     }
 }

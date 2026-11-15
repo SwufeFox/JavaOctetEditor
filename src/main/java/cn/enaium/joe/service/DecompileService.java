@@ -68,16 +68,27 @@ public class DecompileService {
         }
     }
 
-    /** Captures desktop options now; the supplied archive must be independent of live edits. */
-    public static IDecompiler captureService(Jar archive) {
+    /** Captures desktop options now; bind an independent archive on the worker thread. */
+    public static Function<Jar, IDecompiler> captureFactory() {
         JavaOctetEditor editor = JavaOctetEditor.getInstance();
-        Objects.requireNonNull(archive, "Archive");
         Service backend = editor.CONFIG.getByClass(ApplicationConfig.class).decompilerMode.getValue();
-        IDecompiler decompiler = switch (backend) {
-            case VineFlower -> new VineFlowerDecompiler(archive, VineFlowerDecompiler.customProperties.getValue());
-            case CFR -> new CFRDecompiler(archive, CFRDecompiler.options.getValue());
-            case Procyon -> new ProcyonDecompiler(archive, ProcyonDecompiler.cachedFormattingOptions.getValue());
+        Function<Jar, IDecompiler> factory = switch (backend) {
+            case VineFlower -> {
+                var properties = VineFlowerDecompiler.customProperties.getValue();
+                yield archive -> new VineFlowerDecompiler(archive, properties);
+            }
+            case CFR -> {
+                var options = CFRDecompiler.options.getValue();
+                yield archive -> new CFRDecompiler(archive, options);
+            }
+            case Procyon -> {
+                var formatting = ProcyonDecompiler.cachedFormattingOptions.getValue();
+                yield archive -> new ProcyonDecompiler(archive, formatting);
+            }
         };
-        return node -> invoke(decompiler, node, backend);
+        return archive -> {
+            IDecompiler decompiler = factory.apply(Objects.requireNonNull(archive, "Archive"));
+            return node -> invoke(decompiler, node, backend);
+        };
     }
 }

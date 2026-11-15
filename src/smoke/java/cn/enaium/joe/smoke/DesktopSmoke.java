@@ -4,6 +4,7 @@ import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.dialog.QuickOpenDialog;
 import cn.enaium.joe.gui.EntryActions;
 import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.DecompileTabPanel;
+import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ASMifierTablePanel;
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.LangUtil;
@@ -16,6 +17,7 @@ import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Arrays;
@@ -61,9 +63,11 @@ public final class DesktopSmoke {
 
             edt(() -> { editor.fileTree.openEntry("demo/Sample.class"); return null; });
             Component classTab = edt(() -> editor.fileTabbedPanel.getSelectedComponent());
+            screenshot("bytecode-on-open.png");
+            JTabbedPane classViews = edt(() -> find(classTab, JTabbedPane.class, item -> item.getTabCount() == 4));
+            edt(() -> { classViews.setSelectedIndex(1); return null; });
             DecompileTabPanel sourcePanel = edt(() -> find(classTab, DecompileTabPanel.class, item -> true));
             RSyntaxTextArea source = edt(() -> find(sourcePanel, RSyntaxTextArea.class, item -> true));
-            edt(() -> { ((JTabbedPane) SwingUtilities.getAncestorOfClass(JTabbedPane.class, sourcePanel)).setSelectedComponent(sourcePanel); return null; });
             await(() -> source.isEditable() && source.getText().contains("class Sample"), "source decompilation");
             String validSource = "package demo; public class Sample { public static int value() { return 9; } }";
             CompletableFuture<Boolean> capturedCompile = edt(() -> {
@@ -82,6 +86,32 @@ public final class DesktopSmoke {
             check((compiledBytes[6] & 255) * 256 + (compiledBytes[7] & 255) == 52, "Java 8 target remains 52");
             check(value(compiledBytes) == 9, "applied class executes new value");
             await(() -> !sourcePanel.hasDraft() && source.isEditable(), "applied source baseline");
+            String sourceDraft = validSource + "\n// keep this draft while switching views";
+            edt(() -> {
+                source.setText(sourceDraft);
+                source.setCaretPosition(20);
+                source.moveCaretPosition(40);
+                classViews.setSelectedIndex(0);
+                classViews.setSelectedIndex(3);
+                classViews.setSelectedIndex(1);
+                return null;
+            });
+            check(edt(() -> source.isShowing() && source.getText().equals(sourceDraft)
+                    && source.getCaret().getMark() == 20 && source.getCaret().getDot() == 40), "source draft and selection survive view changes");
+            edt(() -> { source.setText(validSource); classViews.setSelectedIndex(2); return null; });
+            ASMifierTablePanel visitorPanel = edt(() -> find(classTab, ASMifierTablePanel.class, item -> true));
+            RSyntaxTextArea visitor = edt(() -> find(visitorPanel, RSyntaxTextArea.class, item -> true));
+            String visitorBaseline = edt(visitor::getText);
+            String visitorDraft = visitorBaseline + "\n// keep this visitor draft";
+            edt(() -> {
+                visitor.setText(visitorDraft);
+                classViews.setSelectedIndex(1);
+                classViews.setSelectedIndex(2);
+                return null;
+            });
+            check(edt(() -> visitor.isShowing() && visitor.getText().equals(visitorDraft)
+                    && visitorPanel.hasDraft()), "visitor draft survives deferred view refresh");
+            edt(() -> { visitor.setText(visitorBaseline); classViews.setSelectedIndex(1); return null; });
             screenshot("source-after-compile.png");
 
             edt(() -> { editor.fileTree.openEntry("config/app.properties"); return null; });
@@ -92,6 +122,7 @@ public final class DesktopSmoke {
             RSyntaxTextArea resource = edt(() -> find(resourceTab, RSyntaxTextArea.class, item -> true));
             edt(() -> { resource.setText("answer=9\n"); return null; });
             check(edt(() -> new String(editor.getJar().getResource("config/app.properties"), StandardCharsets.UTF_8).equals("answer=1\n")), "draft does not mutate resource before apply");
+            check(edt(() -> cn.enaium.joe.gui.editor.DraftSupport.hasDrafts(resourceTab)), "edited resource has an unapplied draft");
             fireCloseTab();
             chooseOption(2);
             check(edt(() -> editor.fileTabbedPanel.indexOfComponent(resourceTab)) >= 0, "cancel close retains tab");
@@ -102,6 +133,7 @@ public final class DesktopSmoke {
             await(() -> editor.fileTabbedPanel.indexOfComponent(resourceTab) < 0, "apply-and-close resource");
             check(edt(() -> Arrays.equals(editor.getJar().getResource("config/app.properties"), "answer=9\n".getBytes(StandardCharsets.UTF_8))), "apply-and-close commits resource");
 
+            edt(() -> { source.setText(sourceDraft); return null; });
             pressKey(source, KeyEvent.VK_P, true);
             await(() -> visibleWindow(QuickOpenDialog.class) != null, "quick open dialog");
             QuickOpenDialog quick = edt(() -> visibleWindow(QuickOpenDialog.class));
@@ -120,6 +152,9 @@ public final class DesktopSmoke {
                     && cn.enaium.joe.gui.component.FileTree.resourceRoot.getChildCount() == 1, "live tree filter without Enter");
             edt(() -> { editor.fileTree.openEntry("demo/Sample.class"); return null; });
             check(edt(() -> editor.fileTree.getSelectionPath()) != null, "navigation reveals target under filter");
+            check(edt(() -> source.isShowing() && sourcePanel.hasDraft() && source.getText().equals(sourceDraft)),
+                    "source draft survives outer tab navigation and filtering");
+            edt(() -> { source.setText(validSource); return null; });
             resourceOperations(compiledBytes);
 
             Path cancelled = evidence.resolve("cancelled.jar");
@@ -145,7 +180,7 @@ public final class DesktopSmoke {
             chooseOption(2);
             check(edt(() -> editor.window.isDisplayable() && newResource.getText().equals("answer=10\n")), "attached-style close cancel keeps window and draft");
             screenshot("protected-editor.png");
-            System.out.println("DESKTOP_SMOKE_OK: load, captured source compilation, newer draft preservation, Java 8 target, Ctrl+P/Enter navigation, live filtering, Ctrl+W draft protection, resource import/replace/delete, exact entry export, archive export/cancellation, attached-style close cancellation.");
+            System.out.println("DESKTOP_SMOKE_OK: lazy class views, source/visitor draft and selection preservation, load, captured source compilation, newer draft preservation, Java 8 target, Ctrl+P/Enter navigation, live filtering, Ctrl+W draft protection, resource import/replace/delete, exact entry export, archive export/cancellation, attached-style close cancellation.");
         } finally {
             edt(() -> {
                 if (editor != null) editor.shutdown();
@@ -285,29 +320,33 @@ public final class DesktopSmoke {
     }
 
     private static void screenshot(String filename) throws Exception {
-        Robot robot = new Robot();
-        robot.waitForIdle();
-        // Native dialog-close animations may outlive the Swing window's visibility.
-        robot.delay(350);
-        Rectangle bounds = edt(() -> editor.window.getBounds());
-        ImageIO.write(robot.createScreenCapture(bounds), "png", evidence.resolve(filename).toFile());
+        edt(() -> {
+            BufferedImage image = new BufferedImage(editor.window.getWidth(), editor.window.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = image.createGraphics();
+            try {
+                editor.window.printAll(graphics);
+            } finally {
+                graphics.dispose();
+            }
+            ImageIO.write(image, "png", evidence.resolve(filename).toFile());
+            return null;
+        });
     }
 
     private static void pressKey(Component target, int key, boolean control) throws Exception {
         check(target != null, "keyboard target exists");
-        edt(() -> {
-            SwingUtilities.getWindowAncestor(target).toFront();
-            target.requestFocusInWindow();
+        FutureTask<Void> dispatch = new FutureTask<>(() -> {
+            check(target.isShowing(), "keyboard target is visible");
+            int modifiers = control ? InputEvent.CTRL_DOWN_MASK : 0;
+            KeyEvent event = new KeyEvent(target, KeyEvent.KEY_PRESSED, System.currentTimeMillis(), modifiers, key, KeyEvent.CHAR_UNDEFINED);
+            check(SwingUtilities.processKeyBindings(event), "keyboard binding handles " + KeyEvent.getKeyText(key));
             return null;
         });
-        await(() -> KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() == target, "keyboard focus");
-        Robot robot = new Robot();
-        robot.setAutoDelay(40);
-        if (control) robot.keyPress(KeyEvent.VK_CONTROL);
-        robot.keyPress(key);
-        robot.keyRelease(key);
-        if (control) robot.keyRelease(KeyEvent.VK_CONTROL);
-        robot.waitForIdle();
+        SwingUtilities.invokeLater(dispatch);
+        edt(() -> {
+            if (dispatch.isDone()) dispatch.get();
+            return null;
+        });
     }
 
     private static void await(Callable<Boolean> condition, String description) throws Exception {

@@ -44,7 +44,6 @@ public class RemappingTask extends AbstractTask<cn.enaium.joe.util.task.ArchiveC
 
     private final File mapping;
     private final MappingFormat mappingFormat;
-    private final Jar original;
     private final cn.enaium.joe.jar.ArchiveSnapshot baseline;
 
     public RemappingTask(Jar archive, File mapping, MappingFormat mappingFormat) {
@@ -52,7 +51,6 @@ public class RemappingTask extends AbstractTask<cn.enaium.joe.util.task.ArchiveC
         this.mapping = mapping;
         this.mappingFormat = mappingFormat;
         this.baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(Objects.requireNonNull(archive));
-        this.original = baseline.toJar();
     }
 
     @Override
@@ -60,8 +58,9 @@ public class RemappingTask extends AbstractTask<cn.enaium.joe.util.task.ArchiveC
 
 
         try {
+            checkCancelled();
             Mapping read = MappingParser.read(mapping.toPath(), mappingFormat);
-            Jar oldJar = original;
+            Jar oldJar = baseline.toJar();
             Jar jar = new Jar();
             jar.putAllResource(oldJar.getResources());
 

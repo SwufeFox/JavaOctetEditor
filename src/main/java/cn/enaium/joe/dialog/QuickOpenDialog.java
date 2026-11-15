@@ -34,6 +34,7 @@ public final class QuickOpenDialog extends JDialog {
     private SwingWorker<ArchiveEntryIndex.Page, Void> worker;
     private ArchiveEntryIndex index;
     private Jar archive;
+    private long structuralRevision = Long.MIN_VALUE;
     private long generation;
     private int nextOffset;
     private boolean disposed;
@@ -129,8 +130,12 @@ public final class QuickOpenDialog extends JDialog {
             return;
         }
         if (disposed) return;
+        Jar current = editor.getJar();
+        long revision = current == null ? 0 : current.getStructuralRevision();
+        if (archive == current && structuralRevision == revision) return;
         invalidateSearch();
-        archive = editor.getJar();
+        archive = current;
+        structuralRevision = revision;
         index = archive == null ? null : ArchiveEntryIndex.capture(archive);
         if (index == null) status.setText(LangUtil.i18n("navigation.noArchive"));
         else search(0);
@@ -139,7 +144,7 @@ public final class QuickOpenDialog extends JDialog {
     private void scheduleSearch() {
         invalidateSearch();
         if (disposed) return;
-        if (editor.getJar() != archive) {
+        if (editor.getJar() != archive || archive != null && archive.getStructuralRevision() != structuralRevision) {
             refreshForArchive();
             return;
         }
@@ -164,7 +169,7 @@ public final class QuickOpenDialog extends JDialog {
 
     private void search(int offset) {
         if (disposed || index == null) return;
-        if (editor.getJar() != archive) {
+        if (editor.getJar() != archive || archive.getStructuralRevision() != structuralRevision) {
             refreshForArchive();
             return;
         }

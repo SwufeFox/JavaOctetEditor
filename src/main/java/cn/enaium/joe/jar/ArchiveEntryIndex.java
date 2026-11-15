@@ -18,12 +18,28 @@ public final class ArchiveEntryIndex {
     }
 
     private record Indexed(Entry entry, String path, String name, String fileName, String dotted, String stem) { }
-    private record Match(Indexed indexed, int rank, int distance) { }
+    private static final class Match {
+        private Indexed indexed;
+        private int rank;
+        private int distance;
+
+        private Match(Indexed indexed, long score) {
+            set(indexed, score);
+        }
+
+        private void set(Indexed indexed, long score) {
+            this.indexed = indexed;
+            rank = (int) (score >>> 32);
+            distance = (int) score;
+        }
+    }
 
     private static final Comparator<Indexed> PATH_ORDER = Comparator
             .comparing(Indexed::path)
             .thenComparing(value -> value.entry().path())
             .thenComparing(value -> value.entry().kind());
+    private static final Comparator<Match> MATCH_ORDER = (left, right) ->
+            compare(left.indexed, left.rank, left.distance, right);
     private final List<Indexed> entries;
 
     private ArchiveEntryIndex(List<Indexed> entries) {
@@ -57,36 +73,83 @@ public final class ArchiveEntryIndex {
     public Page search(String query, Set<Kind> kinds, int offset, int limit) {
         Objects.requireNonNull(kinds, "kinds");
         if (offset < 0 || limit < 1) throw new IllegalArgumentException("offset must be nonnegative and limit positive");
-        String text = Objects.requireNonNullElse(query, "").strip().toLowerCase(Locale.ROOT);
-        String[] tokens = text.isEmpty() ? new String[0] : text.split("\\s+");
+        String text = normalize(query);
+        String[] tokens = tokens(text);
+        int capacity = (int) Math.min((long) offset + limit, entries.size());
+        boolean bounded = capacity < entries.size();
         List<Match> matches = new ArrayList<>();
+        PriorityQueue<Match> best = bounded
+                ? new PriorityQueue<>(Math.min(capacity, 64), MATCH_ORDER.reversed()) : null;
+        int total = 0;
         for (Indexed entry : entries) {
             if (Thread.currentThread().isInterrupted()) throw new CancellationException();
             if (!kinds.contains(entry.entry().kind())) continue;
-            int rank = rank(entry, text);
-            int distance = 0;
-            if (rank < 0) {
-                rank = 4;
-                for (String token : tokens) {
-                    if (entry.path().contains(token) || entry.dotted().contains(token)) continue;
-                    int gap = Math.min(subsequence(entry.path(), token), subsequence(entry.dotted(), token));
-                    if (gap == Integer.MAX_VALUE) {
-                        rank = -1;
-                        break;
-                    }
-                    rank = 5;
-                    distance += gap;
-                }
+            long score = score(entry, text, tokens);
+            if (score < 0) continue;
+            total++;
+            if (!bounded) {
+                matches.add(new Match(entry, score));
+            } else if (best.size() < capacity) {
+                best.add(new Match(entry, score));
+            } else if (compare(entry, (int) (score >>> 32), (int) score, best.peek()) < 0) {
+                Match replacement = best.remove();
+                replacement.set(entry, score);
+                best.add(replacement);
             }
-            if (rank >= 0) matches.add(new Match(entry, rank, distance));
         }
-        matches.sort(Comparator.comparingInt(Match::rank).thenComparingInt(Match::distance)
-                .thenComparing(Match::indexed, PATH_ORDER));
-        int start = Math.min(offset, matches.size());
-        int end = (int) Math.min((long) start + limit, matches.size());
+        if (bounded) matches.addAll(best);
+        matches.sort(MATCH_ORDER);
+        int start = Math.min(offset, total);
+        int end = (int) Math.min((long) start + limit, total);
         List<Entry> result = new ArrayList<>(end - start);
-        for (int i = start; i < end; i++) result.add(matches.get(i).indexed().entry());
-        return new Page(result, matches.size(), end < matches.size(), end);
+        for (int i = start; i < end; i++) result.add(matches.get(i).indexed.entry());
+        return new Page(result, total, end < total, end);
+    }
+
+    /** All matching names in capture order, without ranking or sorting. */
+    public List<Entry> matchingEntries(String query, Set<Kind> kinds) {
+        Objects.requireNonNull(kinds, "kinds");
+        String text = normalize(query);
+        String[] tokens = tokens(text);
+        List<Entry> result = new ArrayList<>();
+        for (Indexed entry : entries) {
+            if (Thread.currentThread().isInterrupted()) throw new CancellationException();
+            if (kinds.contains(entry.entry().kind()) && score(entry, text, tokens) >= 0)
+                result.add(entry.entry());
+        }
+        return List.copyOf(result);
+    }
+
+    private static String normalize(String query) {
+        return Objects.requireNonNullElse(query, "").strip().toLowerCase(Locale.ROOT);
+    }
+
+    private static String[] tokens(String text) {
+        return text.isEmpty() ? new String[0] : text.split("\\s+");
+    }
+
+    // Pack the rank and signed distance without allocating a result for every candidate.
+    private static long score(Indexed entry, String text, String[] tokens) {
+        int rank = rank(entry, text);
+        int distance = 0;
+        if (rank < 0) {
+            rank = 4;
+            for (String token : tokens) {
+                if (entry.path().contains(token) || entry.dotted().contains(token)) continue;
+                int gap = Math.min(subsequence(entry.path(), token), subsequence(entry.dotted(), token));
+                if (gap == Integer.MAX_VALUE) return -1;
+                rank = 5;
+                distance += gap;
+            }
+        }
+        return ((long) rank << 32) | Integer.toUnsignedLong(distance);
+    }
+
+    private static int compare(Indexed indexed, int rank, int distance, Match other) {
+        int order = Integer.compare(rank, other.rank);
+        if (order == 0) order = Integer.compare(distance, other.distance);
+        if (order == 0) order = PATH_ORDER.compare(indexed, other.indexed);
+        return order;
     }
 
     private static int rank(Indexed entry, String text) {

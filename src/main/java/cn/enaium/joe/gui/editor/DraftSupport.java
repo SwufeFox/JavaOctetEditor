@@ -6,6 +6,9 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.JTextComponent;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Document;
+import javax.swing.text.Segment;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -27,12 +30,20 @@ public final class DraftSupport {
     private static void collect(Component component, List<EditorDraft> drafts) {
         if (component instanceof EditorDraft draft) drafts.add(draft);
         if (component instanceof Container container) {
-            for (Component child : container.getComponents()) collect(child, drafts);
+            for (int index = 0; index < container.getComponentCount(); index++) {
+                collect(container.getComponent(index), drafts);
+            }
         }
     }
 
     public static boolean hasDrafts(Component root) {
-        return collect(root).stream().anyMatch(EditorDraft::hasDraft);
+        if (root instanceof EditorDraft draft && draft.hasDraft()) return true;
+        if (root instanceof Container container) {
+            for (int index = 0; index < container.getComponentCount(); index++) {
+                if (hasDrafts(container.getComponent(index))) return true;
+            }
+        }
+        return false;
     }
 
     public static CompletableFuture<Boolean> saveAll(Component root) {
@@ -130,27 +141,70 @@ public final class DraftSupport {
         private String baseline;
         private long revision;
         private boolean replacing;
+        private Document document;
+        private final Segment segment = new Segment();
+        private boolean dirty;
+        private boolean dirtyKnown = true;
+        private final DocumentListener listener = new DocumentListener() {
+            public void insertUpdate(DocumentEvent event) { update(); }
+            public void removeUpdate(DocumentEvent event) { update(); }
+            public void changedUpdate(DocumentEvent event) { update(); }
+        };
+
+        private void update() {
+            revision++;
+            dirtyKnown = false;
+            if (!replacing) changed.run();
+        }
 
         public TextState(JTextComponent text, Runnable changed) {
             this.text = text;
             this.changed = changed;
             baseline = text.getText();
-            text.getDocument().addDocumentListener(new DocumentListener() {
-                public void insertUpdate(DocumentEvent event) { update(); }
-                public void removeUpdate(DocumentEvent event) { update(); }
-                public void changedUpdate(DocumentEvent event) { update(); }
-                private void update() {
-                    revision++;
-                    if (!replacing) changed.run();
-                }
+            document = text.getDocument();
+            document.addDocumentListener(listener);
+            text.addPropertyChangeListener("document", event -> {
+                document.removeDocumentListener(listener);
+                document = text.getDocument();
+                document.addDocumentListener(listener);
+                update();
             });
         }
 
-        public boolean isDirty() { return !baseline.equals(text.getText()); }
+        public boolean isDirty() {
+            if (!dirtyKnown) {
+                dirty = !matchesBaseline();
+                dirtyKnown = true;
+            }
+            return dirty;
+        }
+
+        private boolean matchesBaseline() {
+            int length = document.getLength();
+            if (length != baseline.length()) return false;
+            segment.setPartialReturn(true);
+            try {
+                int position = 0;
+                while (position < length) {
+                    document.getText(position, length - position, segment);
+                    if (segment.count == 0) throw new IllegalStateException("Document returned no text");
+                    for (int index = 0; index < segment.count; index++) {
+                        if (segment.array[segment.offset + index] != baseline.charAt(position + index)) return false;
+                    }
+                    position += segment.count;
+                }
+                return true;
+            } catch (BadLocationException failure) {
+                throw new IllegalStateException("Unable to compare draft text", failure);
+            } finally {
+                segment.array = null;
+            }
+        }
         public long revision() { return revision; }
 
         public void applied(String appliedText) {
             baseline = appliedText;
+            dirtyKnown = false;
             changed.run();
         }
 
@@ -162,6 +216,7 @@ public final class DraftSupport {
             try {
                 text.setText(content);
                 baseline = content;
+                dirtyKnown = false;
                 int length = text.getDocument().getLength();
                 text.setCaretPosition(Math.min(mark, length));
                 text.moveCaretPosition(Math.min(dot, length));

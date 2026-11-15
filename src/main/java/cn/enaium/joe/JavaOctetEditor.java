@@ -52,6 +52,7 @@ import java.awt.Container;
 import java.awt.Window;
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -74,7 +75,8 @@ public class JavaOctetEditor {
     private final ArchiveDocumentState document = new ArchiveDocumentState();
     private File archiveSource;
     private File outputDestination;
-    private long draftRevision;
+    private final AtomicLong draftRevision = new AtomicLong();
+    private boolean draftPresentationPending;
     private boolean closePending;
 
     public File getArchiveSource() {
@@ -100,13 +102,22 @@ public class JavaOctetEditor {
     }
 
     public void draftsChanged() {
+        draftRevision.incrementAndGet();
         if (!SwingUtilities.isEventDispatchThread()) {
-            SwingUtilities.invokeLater(this::draftsChanged);
+            SwingUtilities.invokeLater(this::scheduleDraftPresentation);
             return;
         }
-        draftRevision++;
-        if (fileTabbedPanel != null) fileTabbedPanel.refreshDraftIndicators();
-        refreshDocumentPresentation();
+        scheduleDraftPresentation();
+    }
+
+    private void scheduleDraftPresentation() {
+        if (draftPresentationPending) return;
+        draftPresentationPending = true;
+        SwingUtilities.invokeLater(() -> {
+            draftPresentationPending = false;
+            if (fileTabbedPanel != null) fileTabbedPanel.refreshDraftIndicators();
+            refreshDocumentPresentation();
+        });
     }
 
     private void refreshDocumentPresentation() {
@@ -168,7 +179,7 @@ public class JavaOctetEditor {
             }
             document.refreshDirty();
             refreshDocumentPresentation();
-            Authorization authorization = new Authorization(document.captureGuard(), draftRevision, consent);
+            Authorization authorization = new Authorization(document.captureGuard(), draftRevision.get(), consent);
             if (!document.isDirty()) {
                 result.complete(authorization);
                 return;
@@ -205,7 +216,7 @@ public class JavaOctetEditor {
         }
 
         private boolean isValid() {
-            return !closed && drafts == draftRevision && consent.isValid() && document.isCurrent(model);
+            return !closed && drafts == draftRevision.get() && consent.isValid() && document.isCurrent(model);
         }
     }
 

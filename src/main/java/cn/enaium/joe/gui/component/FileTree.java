@@ -39,6 +39,7 @@ import java.awt.event.MouseEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
@@ -56,9 +57,12 @@ public class FileTree extends JTree {
 
     private Jar archive;
     private ArchiveEntryIndex index;
+    private long structuralRevision = Long.MIN_VALUE;
+    private PackagePresentation packagePresentation;
+    private boolean compactMiddlePackage;
     private String filterQuery = "";
     private long filterGeneration;
-    private SwingWorker<ArchiveEntryIndex.Page, Void> filterWorker;
+    private SwingWorker<List<ArchiveEntryIndex.Entry>, Void> filterWorker;
     private javax.swing.Timer filterDelay;
     private int matchCount;
     private boolean filterBusy;
@@ -88,6 +92,10 @@ public class FileTree extends JTree {
         KeyStrokeUtil.register(this, JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class)
                 .keymap.getValue().copy.getValue(), this::copyFile);
         KeyStrokeUtil.register(this, KeyStroke.getKeyStroke("ENTER"), this::addTab);
+        JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class).compactMiddlePackage
+                .addListener((instance, oldValue, newValue) -> {
+                    if (!Objects.equals(oldValue, newValue)) refresh(archive);
+                });
     }
 
     private void showPopup(MouseEvent event) {
@@ -134,12 +142,11 @@ public class FileTree extends JTree {
         ClassNode classNode = path.endsWith(".class")
                 ? current.getClassNode(path.substring(0, path.length() - 6)) : null;
         if (classNode == null && !current.getResources().containsKey(path)) return false;
-        if (archive != current) refresh(current);
+        if (archive != current || structuralRevision != current.getStructuralRevision()) refresh(current);
         TreePath target = findEntry(path, classNode != null);
         if (target != null && classNode != null
                 && ((ClassTreeNode) target.getLastPathComponent()).classNode != classNode) target = null;
         if (target == null) {
-            index = ArchiveEntryIndex.capture(current);
             if (filterQuery.isEmpty()) applyFilter();
             else setFilterQuery("");
             target = findEntry(path, classNode != null);
@@ -217,15 +224,23 @@ public class FileTree extends JTree {
             SwingUtilities.invokeLater(() -> refresh(jar));
             return;
         }
-        if (archive != jar) {
-            unfilteredExpansion = null;
-            String previous = filterQuery;
-            filterQuery = "";
-            firePropertyChange("filterQuery", previous, filterQuery);
+        ApplicationConfig config = JavaOctetEditor.getInstance().CONFIG.getByClass(ApplicationConfig.class);
+        PackagePresentation presentation = config.packagePresentation.getValue();
+        boolean compact = config.compactMiddlePackage.getValue();
+        long revision = jar == null ? Long.MIN_VALUE : jar.getStructuralRevision();
+        boolean structureChanged = archive != jar || structuralRevision != revision;
+        boolean settingsChanged = packagePresentation != presentation || compactMiddlePackage != compact;
+        if (!structureChanged && !settingsChanged) {
+            repaint();
+            return;
         }
+        if (archive != jar) unfilteredExpansion = null;
         Jar previousArchive = archive;
         archive = jar;
-        index = jar == null ? null : ArchiveEntryIndex.capture(jar);
+        structuralRevision = revision;
+        packagePresentation = presentation;
+        compactMiddlePackage = compact;
+        if (structureChanged) index = jar == null ? null : ArchiveEntryIndex.capture(jar);
         applyFilter();
         firePropertyChange("archive", previousArchive, archive);
     }
@@ -251,8 +266,8 @@ public class FileTree extends JTree {
             filterDelay = null;
             filterWorker = new SwingWorker<>() {
                 @Override
-                protected ArchiveEntryIndex.Page doInBackground() {
-                    return capturedIndex.search(query, EnumSet.allOf(ArchiveEntryIndex.Kind.class), 0, Integer.MAX_VALUE);
+                protected List<ArchiveEntryIndex.Entry> doInBackground() {
+                    return capturedIndex.matchingEntries(query, EnumSet.allOf(ArchiveEntryIndex.Kind.class));
                 }
 
                 @Override
@@ -261,11 +276,11 @@ public class FileTree extends JTree {
                             || !JavaOctetEditor.getInstance().isCurrentArchive(capturedArchive)) return;
                     filterWorker = null;
                     try {
-                        ArchiveEntryIndex.Page page = get();
+                        List<ArchiveEntryIndex.Entry> entries = get();
                         Set<String> visible = new HashSet<>();
-                        for (ArchiveEntryIndex.Entry entry : page.entries()) visible.add(entry.kind() + ":" + entry.path());
+                        for (ArchiveEntryIndex.Entry entry : entries) visible.add(entry.kind() + ":" + entry.path());
                         rebuild(visible);
-                        setMatchCount(page.total());
+                        setMatchCount(entries.size());
                     } catch (CancellationException ignored) {
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();

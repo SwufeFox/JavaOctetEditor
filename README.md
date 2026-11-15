@@ -128,6 +128,8 @@ Tools inspect and compile bytecode without executing archive classes. Annotation
 
 Open a JAR, ZIP, class file, or class directory from File, the recent list, or by dropping it into the window. The tree filter updates as you type. Clear it with Escape. Quick open searches class and resource names together, accepts dotted class names and abbreviations, and displays full paths to distinguish entries with the same filename. Opening an entry again selects its existing tab.
 
+Class views initialize when selected and reuse their editors when switching views or tabs. Source and visitor drafts, caret positions, and selections remain available while other views are active.
+
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+O | Open an archive or class |
@@ -167,6 +169,8 @@ Exports use a temporary sibling file. Replacing an existing output requires atom
 
 Background desktop operations work on owned archive snapshots, including resource bytes and captured decompiler options. Compilation, visitor edits, remapping, and transforms reject conflicting later edits before publication; exports represent captured bytes directly and keep newer changes marked as unexported. A newer load request invalidates older publication even if the newer load fails or is cancelled; a load also refuses to discard edits made after replacement was authorized. Retained class wrappers and unrelated editor tabs remain in place. Removed classes with dirty drafts keep their text for explicit resolution. Source recompilation removes obsolete nested classes using bytecode ownership metadata and preserves unrelated top-level names containing `$`.
 
+Desktop task constructors capture inputs and options on the model's owning thread; workers recreate mutable archives and decompiler contexts. Navigation caches use `Jar.getStructuralRevision()` for path and class-wrapper changes, while publication independently validates snapshot content. Dirty-text comparisons cache their result by document revision, and every edit immediately invalidates prior draft consent.
+
 Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration.
 
 Tests cover archive round trips and failed-write preservation, snapshot isolation and conflicting commits, real dependency/target compatibility, decompiler round trips, task publication/cancellation and load intent, settings recovery, events, and concurrent CLI/MCP workflows. Run `./gradlew test` or select a class with `--tests`, for example:
@@ -182,3 +186,5 @@ Run the desktop journeys in a graphical session:
 ```
 
 This explicit task builds the runnable JAR and exercises real Swing load, source compilation, newer-draft preservation, keyboard navigation, guarded tab/window close, resource import/replace/delete, single-file export, and archive export/cancellation. Each run uses a fresh directory under `build/desktop-smoke/` for fixtures, application settings, exported files, and screenshots. The smoke source is in `src/smoke/java/`; it runs separately from the headless `test` and default `build` tasks.
+
+The smoke checks dispatch Swing shortcut bindings to the editor and render screenshots from its own window components. This keeps test input and evidence independent of other foreground applications. Class-view journeys also check deferred initialization and source/visitor draft and selection preservation.

@@ -16,6 +16,7 @@
 
 package cn.enaium.joe.util.task.tasks;
 
+import cn.enaium.joe.jar.ArchiveSnapshot;
 import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.service.DecompileService;
 import cn.enaium.joe.service.decompiler.IDecompiler;
@@ -31,7 +32,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Map;
-import java.util.jar.JarEntry;
+import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -40,19 +41,22 @@ import java.util.zip.ZipOutputStream;
  * @since 0.10.0
  */
 public class SaveAllSourceTask extends AbstractTask<Boolean> {
-    private final Jar jar;
+    private final ArchiveSnapshot baseline;
     private final File out;
-    private final IDecompiler decompiler;
+    private final Function<Jar, IDecompiler> decompilerFactory;
 
     public SaveAllSourceTask(Jar jar, File out) {
         super("SaveAllSource");
-        this.jar = cn.enaium.joe.jar.ArchiveSnapshot.capture(jar).toJar();
-        this.decompiler = DecompileService.captureService(this.jar);
+        this.baseline = ArchiveSnapshot.capture(jar);
+        this.decompilerFactory = DecompileService.captureFactory();
         this.out = out;
     }
 
     @Override
     public Boolean get() {
+        checkCancelled();
+        Jar jar = baseline.toJar();
+        IDecompiler decompiler = decompilerFactory.apply(jar);
         int completed = 0;
         int count = jar.getClassSize() + jar.getResourceSize();
         Path destination = out.toPath().toAbsolutePath();

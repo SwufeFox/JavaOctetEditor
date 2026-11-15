@@ -7,6 +7,7 @@ import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.util.task.tasks.CompileSourceTask;
 import cn.enaium.joe.util.task.tasks.CompileVisitorTask;
 import cn.enaium.joe.util.task.tasks.OutputJarTask;
+import cn.enaium.joe.util.task.tasks.TransformerTask;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassWriter;
@@ -15,6 +16,7 @@ import org.objectweb.asm.Opcodes;
 import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
 import java.util.Map;
+import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -96,6 +98,28 @@ class ArchiveTaskTest {
         retained.getClassNode().sourceFile = "newer.java";
         assertThrows(ConcurrentModificationException.class, () -> older.applyTo(live));
         assertEquals(0, retained.getFields().length);
+    }
+
+    @Test
+    void transformerReadsSubmittedBytesAndRejectsLaterLiveEdits() {
+        Jar live = archive();
+        Map<String, String> observedSources = new HashMap<>();
+        TransformerTask task = new TransformerTask(live, (name, node) -> {
+            observedSources.put(name, node.getNodeInternal().sourceFile);
+            node.getClassNode().sourceFile = "transformed.java";
+            return node;
+        });
+        live.getClassNode("sample/Keep").getClassNode().sourceFile = "newer.java";
+        live.getResource("data.bin")[0] = 9;
+
+        ArchiveChange change = task.get();
+
+        assertEquals(2, observedSources.size());
+        assertTrue(observedSources.containsKey("sample.Keep"));
+        assertNull(observedSources.get("sample.Keep"));
+        assertThrows(ConcurrentModificationException.class, () -> change.applyTo(live));
+        assertEquals("newer.java", live.getClassNode("sample/Keep").getNodeInternal().sourceFile);
+        assertArrayEquals(new byte[] {9}, live.getResource("data.bin"));
     }
 
     @Test

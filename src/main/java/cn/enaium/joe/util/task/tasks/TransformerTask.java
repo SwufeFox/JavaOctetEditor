@@ -6,18 +6,18 @@ import cn.enaium.joe.util.transformer.ITransformer;
 
 public class TransformerTask extends AbstractTask<cn.enaium.joe.util.task.ArchiveChange> {
     private final ITransformer<ClassNode> transformer;
-    private final cn.enaium.joe.jar.Jar staged;
     private final cn.enaium.joe.jar.ArchiveSnapshot baseline;
 
     public TransformerTask(cn.enaium.joe.jar.Jar archive, ITransformer<ClassNode> classNodeITransformer) {
         super("Transforming");
         this.transformer = classNodeITransformer;
         this.baseline = cn.enaium.joe.jar.ArchiveSnapshot.capture(archive);
-        this.staged = baseline.toJar();
     }
 
     @Override
     public cn.enaium.joe.util.task.ArchiveChange get() {
+        checkCancelled();
+        cn.enaium.joe.jar.Jar staged = baseline.toJar();
         int completed = 0;
         for (ClassNode classNode : staged.getClasses()) {
             setProgress(completed++ * 100 / Math.max(1, staged.getClassSize()));
