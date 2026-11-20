@@ -96,6 +96,9 @@ public final class DesktopSmoke {
                     item -> item.getSelectedItem() instanceof DecompileService.Service));
             edt(() -> { backend.setSelectedItem(DecompileService.Service.CFR); return null; });
             await(() -> retry.isEnabled() && source.isEditable() && source.getText().contains("class Sample"), "source backend switch");
+            pressKey(source, KeyEvent.VK_1, true);
+            check(edt(() -> classViews.getSelectedIndex() == 0), "Ctrl+1 switches to the bytecode view");
+            edt(() -> { classViews.setSelectedIndex(1); return null; });
             check(edt(() -> find(classTab, JTextField.class, item -> !item.isEditable()
                     && item.getText().equals("demo/Sample.class"))) != null, "class header exposes full path");
             String invalidSource = "package demo;\npublic class Sample {\n    public static int value() {\n        return ;\n    }\n}\n";

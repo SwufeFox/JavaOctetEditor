@@ -25,6 +25,7 @@ import cn.enaium.joe.dialog.search.SearchMethodDialog;
 import cn.enaium.joe.util.event.events.FileTabbedSelectEvent;
 import cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ClassTabPanel;
 import cn.enaium.joe.util.JMenuUtil;
+import cn.enaium.joe.util.KeyStrokeUtil;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.asm.OpcodeUtil;
 import cn.enaium.joe.util.Pair;
@@ -57,6 +58,10 @@ public class MemberListPanel extends BorderPanel {
         });
 
         JMenuUtil.addPopupMenu(memberList, () -> getPopupMenu(memberList.getSelectedValue()), () -> memberList.getSelectedIndex() != -1);
+        memberList.getAccessibleContext().setAccessibleName(LangUtil.i18n("sideTab.member"));
+        KeyStrokeUtil.register(memberList, KeyStroke.getKeyStroke("ENTER"), () -> {
+            if (memberList.getSelectedIndex() != -1) edit(memberList.getSelectedValue());
+        });
 
         memberList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0)) {{
             if (isSelected) {

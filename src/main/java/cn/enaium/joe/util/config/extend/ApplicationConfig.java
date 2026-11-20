@@ -40,6 +40,18 @@ public class ApplicationConfig extends Config {
     public EnableValue compactMiddlePackage = new EnableValue("Compact Middle Package", true, "Only Hierarchical Mode");
     @NoUI
     public final RecentFilesValue loadRecent = new RecentFilesValue("Load Recent", "");
+    @NoUI
+    public final StringValue lastDirectory = new StringValue("Last Directory", "", "");
+    @NoUI
+    public final IntegerValue windowX = new IntegerValue("Window X", 0, "");
+    @NoUI
+    public final IntegerValue windowY = new IntegerValue("Window Y", 0, "");
+    @NoUI
+    public final IntegerValue windowWidth = new IntegerValue("Window Width", 0, "");
+    @NoUI
+    public final IntegerValue windowHeight = new IntegerValue("Window Height", 0, "");
+    @NoUI
+    public final EnableValue windowMaximized = new EnableValue("Window Maximized", false, "");
     public IntegerValue scale = new IntegerValue("Scale", 0, "UI scale,it doesn't scale if value 0");
 
     public ConfigValue<KeymapConfig> keymap = new ConfigValue<>(new KeymapConfig(), "The setting of key setting.");

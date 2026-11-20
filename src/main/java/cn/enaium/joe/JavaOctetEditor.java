@@ -45,10 +45,14 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import org.fife.ui.rsyntaxtextarea.AbstractTokenMakerFactory;
 import org.fife.ui.rsyntaxtextarea.TokenMakerFactory;
 
+import cn.enaium.joe.gui.WindowGeometry;
 import javax.swing.*;
 import java.awt.event.*;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.awt.Window;
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
@@ -76,6 +80,8 @@ public class JavaOctetEditor {
     private File archiveSource;
     private File outputDestination;
     private final AtomicLong draftRevision = new AtomicLong();
+    private volatile boolean draftsCache;
+    private volatile long draftsCacheRevision = Long.MIN_VALUE;
     private boolean draftPresentationPending;
     private boolean closePending;
 
@@ -88,7 +94,12 @@ public class JavaOctetEditor {
     }
 
     public boolean hasUnappliedDrafts() {
-        return fileTabbedPanel != null && DraftSupport.hasDrafts(fileTabbedPanel);
+        long revision = draftRevision.get();
+        if (draftsCacheRevision != revision) {
+            draftsCache = fileTabbedPanel != null && DraftSupport.hasDrafts(fileTabbedPanel);
+            draftsCacheRevision = revision;
+        }
+        return draftsCache;
     }
 
     public void markArchiveModified() {
@@ -459,9 +470,35 @@ public class JavaOctetEditor {
                 shutdown();
             }
         });
-        window.setSize(Util.screenSize(1000, 600));
-        window.setLocationRelativeTo(null);
+        ApplicationConfig application = CONFIG.getByClass(ApplicationConfig.class);
+        Rectangle restored = WindowGeometry.restore(application.windowX.getValue(), application.windowY.getValue(),
+                application.windowWidth.getValue(), application.windowHeight.getValue(),
+                virtualScreenBounds(), Util.screenSize(1000, 600));
+        window.setMinimumSize(new java.awt.Dimension(640, 480));
+        window.setBounds(restored);
+        if (application.windowMaximized.getValue()) window.setExtendedState(JFrame.MAXIMIZED_BOTH);
         window.setVisible(true);
+    }
+
+    private static Rectangle virtualScreenBounds() {
+        Rectangle bounds = new Rectangle();
+        for (GraphicsDevice device : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+            bounds = bounds.union(device.getDefaultConfiguration().getBounds());
+        }
+        return bounds;
+    }
+
+    private void rememberWindowState() {
+        if (window == null || window.getWidth() <= 0 || window.getHeight() <= 0) return;
+        ApplicationConfig application = CONFIG.getByClass(ApplicationConfig.class);
+        boolean maximized = (window.getExtendedState() & JFrame.MAXIMIZED_BOTH) != 0;
+        application.windowMaximized.setValue(maximized);
+        if (maximized) return;
+        Rectangle bounds = window.getBounds();
+        application.windowX.setValue(bounds.x);
+        application.windowY.setValue(bounds.y);
+        application.windowWidth.setValue(bounds.width);
+        application.windowHeight.setValue(bounds.height);
     }
 
     public Jar getJar() {
@@ -480,6 +517,7 @@ public class JavaOctetEditor {
         outputDestination = null;
         document.replace(jar);
         fileTabbedPanel.removeAll();
+        draftRevision.incrementAndGet();
         ClassTabPanel.clearPanels();
         fileTree.refresh(jar);
         if (workspace != null) workspace.refreshWorkspace();
@@ -507,6 +545,7 @@ public class JavaOctetEditor {
         }
         if (closed) return;
         closed = true;
+        rememberWindowState();
         loadRequests.close();
         TASKS.close();
         ASyncUtil.shutdown();

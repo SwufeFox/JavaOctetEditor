@@ -17,6 +17,7 @@
 package cn.enaium.joe.util;
 
 import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.util.config.extend.ApplicationConfig;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileFilter;
@@ -47,20 +48,40 @@ public class JFileChooserUtil {
 
     public static File show(Type type, FileFilter fileFilter, int mode, File suggested) {
         JFileChooser jFileChooser = new JFileChooser();
-        jFileChooser.setCurrentDirectory(FileSystemView.getFileSystemView().getHomeDirectory());
+        JavaOctetEditor editor = JavaOctetEditor.getInstance();
+        ApplicationConfig config = editor == null ? null : editor.CONFIG.getByClass(ApplicationConfig.class);
+        String remembered = config == null ? null : config.lastDirectory.getValue();
+        jFileChooser.setCurrentDirectory(initialDirectory(suggested, remembered,
+                FileSystemView.getFileSystemView().getHomeDirectory()));
         jFileChooser.setFileSelectionMode(mode);
         jFileChooser.removeChoosableFileFilter(jFileChooser.getAcceptAllFileFilter());
         jFileChooser.addChoosableFileFilter(fileFilter);
-        if (suggested != null) {
-            File parent = suggested.getAbsoluteFile().getParentFile();
-            if (parent != null) jFileChooser.setCurrentDirectory(parent);
-            jFileChooser.setSelectedFile(suggested);
-        }
+        if (suggested != null) jFileChooser.setSelectedFile(suggested);
 
         int result = type == Type.OPEN
                 ? jFileChooser.showOpenDialog(JavaOctetEditor.getInstance().window)
                 : jFileChooser.showSaveDialog(JavaOctetEditor.getInstance().window);
-        return result == JFileChooser.APPROVE_OPTION ? jFileChooser.getSelectedFile() : null;
+        if (result != JFileChooser.APPROVE_OPTION) return null;
+        File selected = jFileChooser.getSelectedFile();
+        if (config != null && selected != null) {
+            File directory = mode == JFileChooser.DIRECTORIES_ONLY ? selected : selected.getParentFile();
+            if (directory != null && directory.isDirectory()) config.lastDirectory.setValue(directory.getAbsolutePath());
+        }
+        return selected;
+    }
+
+    /** Prefer the suggested location, then the last directory, then the chooser fallback. */
+    static File initialDirectory(File suggested, String remembered, File fallback) {
+        if (suggested != null) {
+            File absolute = suggested.getAbsoluteFile();
+            File candidate = absolute.isDirectory() ? absolute : absolute.getParentFile();
+            if (candidate != null && candidate.isDirectory()) return candidate;
+        }
+        if (remembered != null && !remembered.isBlank()) {
+            File candidate = new File(remembered);
+            if (candidate.isDirectory()) return candidate;
+        }
+        return fallback != null && fallback.isDirectory() ? fallback : new File(".");
     }
 
     public enum Type {

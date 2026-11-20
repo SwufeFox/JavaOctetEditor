@@ -60,6 +60,8 @@ public class FileTabbedPanel extends JTabbedPane {
                 if (getSelectedComponent() != null) closeTabs(List.of(getSelectedComponent()));
             }
         });
+        bindTabCycle("nextTab", KeyEvent.VK_PAGE_DOWN, 1);
+        bindTabCycle("previousTab", KeyEvent.VK_PAGE_UP, -1);
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent event) {
@@ -88,6 +90,20 @@ public class FileTabbedPanel extends JTabbedPane {
             addCloseItem(menu, "popup.tabbed.closeAllRight", 3);
             return menu;
         }, () -> getSelectedComponent() != null);
+    }
+
+    private void bindTabCycle(String name, int key, int direction) {
+        getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(key, InputEvent.CTRL_DOWN_MASK), name);
+        getActionMap().put(name, new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                int count = getTabCount();
+                if (count < 2) return;
+                int selected = Math.max(0, getSelectedIndex());
+                setSelectedIndex(Math.floorMod(selected + direction, count));
+            }
+        });
     }
 
     private int tabAt(Point point) {

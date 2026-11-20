@@ -28,6 +28,8 @@ import javax.swing.*;
 import java.awt.*;
 import java.lang.ref.WeakReference;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import javax.swing.event.ChangeListener;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -77,6 +79,17 @@ public class ClassTabPanel extends JPanel {
         jTabbedPane.addTab(LangUtil.i18n("class.tab.infoEdit"), new JPanel());
         for (int index = 0; index < jTabbedPane.getTabCount(); index++) {
             cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator.apply(jTabbedPane, index, false);
+            int view = index;
+            KeyStroke shortcut = KeyStroke.getKeyStroke(KeyEvent.VK_1 + index, InputEvent.CTRL_DOWN_MASK);
+            jTabbedPane.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                    .put(shortcut, "classView" + index);
+            jTabbedPane.getActionMap().put("classView" + index, new AbstractAction() {
+                @Override
+                public void actionPerformed(java.awt.event.ActionEvent event) {
+                    jTabbedPane.setSelectedIndex(view);
+                }
+            });
+            jTabbedPane.setToolTipTextAt(index, "Ctrl+" + (index + 1));
         }
         jTabbedPane.setSelectedIndex(classTabIndex);
         internalName2panel.entrySet().removeIf(entry -> entry.getValue().get() == null);

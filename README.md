@@ -132,7 +132,7 @@ The recent files menu keeps the 20 latest successfully opened paths, newest firs
 
 Class views initialize when selected and reuse their editors when switching views or tabs. Source and visitor drafts, caret positions, and selections remain available while other views are active. A selectable class header exposes the full archive path. Class tabs with the same simple name include their packages; closing the collision restores compact titles.
 
-Middle-click a tab or use its context menu to close it through the normal draft check. Reopen closed tabs restores the most recent entry in the same archive when it still exists. Reload from disk re-reads the current source through the normal draft and unexported-change confirmation, so external updates do not bypass the safety checks. Tree context menus can expand or collapse a whole branch.
+Middle-click a tab or use its context menu to close it through the normal draft check. Reopen closed tabs restores the most recent entry in the same archive when it still exists. Reload from disk re-reads the current source through the normal draft and unexported-change confirmation, so external updates do not bypass the safety checks. Tree context menus can expand or collapse a whole branch. File choosers start in the last directory you used, and the next launch restores the previous window size, position and maximized state when it remains visible on the current displays.
 
 | Shortcut | Action |
 | --- | --- |
@@ -145,6 +145,9 @@ Middle-click a tab or use its context menu to close it through the normal draft 
 | F3 / Shift+F3 | Find the next / previous match, wrapping at the document boundary |
 | Enter / Shift+Enter in the find bar | Find the next / previous match |
 | Escape in the find bar or editor | Close the find bar and return to the editor |
+| Ctrl+1 … Ctrl+4 | Switch between bytecode, source, visitor and info views |
+| Ctrl+PageUp / Ctrl+PageDown | Select the previous / next open tab |
+| Enter on a member | Edit the selected field or method |
 | Ctrl+S (configurable) | Apply the current source, visitor, or text-resource draft in memory |
 | Ctrl+Shift+S | Export the archive |
 | Ctrl+W | Close the current tab, checking for drafts |
@@ -187,7 +190,7 @@ Background desktop operations work on owned archive snapshots, including resourc
 
 Desktop task constructors capture inputs and options on the model's owning thread; workers recreate mutable archives and decompiler contexts. Navigation caches use `Jar.getStructuralRevision()` for path and class-wrapper changes, while publication independently validates snapshot content. Dirty-text comparisons cache their result by document revision, and every edit immediately invalidates prior draft consent.
 
-Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration.
+Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration. Window geometry and the last file-chooser directory are stored with the same safeguards; restored geometry is clamped to the visible desktop.
 
 Unexpected exceptions raised on the Swing event thread are logged and shown in a bounded error panel with copyable technical details instead of leaving the UI in a partially updated state. Load and export failures keep the current archive and drafts unchanged and include the affected path.
 
