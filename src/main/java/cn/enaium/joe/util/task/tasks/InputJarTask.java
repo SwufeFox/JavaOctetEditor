@@ -19,6 +19,7 @@ package cn.enaium.joe.util.task.tasks;
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.task.AbstractTask;
 import org.tinylog.Logger;
 
@@ -52,7 +53,7 @@ public class InputJarTask extends AbstractTask<Jar> {
         try {
             return ArchiveIO.read(file.toPath(), this::setProgress);
         } catch (IOException exception) {
-            throw new UncheckedIOException("Could not input archive: " + file, exception);
+            throw new UncheckedIOException(LangUtil.i18n("document.loadFailed", file.getAbsolutePath()), exception);
         }
     }
 

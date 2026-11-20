@@ -6,7 +6,7 @@ final class ClassTabTitle {
     }
 
     static String format(String internalName, boolean collision, String defaultPackage,
-                         String removedLabel, boolean dirty) {
+                         String removedLabel) {
         int separator = internalName.lastIndexOf('/');
         String title = internalName.substring(separator + 1);
         if (collision) {
@@ -15,6 +15,6 @@ final class ClassTabTitle {
             title += " (" + packageName + ")";
         }
         if (removedLabel != null) title += " (" + removedLabel + ")";
-        return dirty ? title + " *" : title;
+        return title;
     }
 }

@@ -16,16 +16,17 @@
 
 package cn.enaium.joe.dialog;
 
-import cn.enaium.joe.gui.component.ResultList;
-import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.JavaOctetEditor;
+import cn.enaium.joe.gui.component.ResultList;
 import cn.enaium.joe.gui.panel.search.ResultNode;
+import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.task.AbstractTask;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * @author Enaium
@@ -33,7 +34,7 @@ import java.awt.*;
 public class SearchDialog extends Dialog {
     public ResultList resultList = new ResultList();
     private final JLabel status = new JLabel(LangUtil.i18n("search.ready"));
-    private CompletableFuture<?> search;
+    private volatile CompletableFuture<?> search;
 
     public SearchDialog() {
         super(LangUtil.i18n("menu.search"));
@@ -44,35 +45,61 @@ public class SearchDialog extends Dialog {
     }
 
     protected void runSearch(AbstractTask<List<ResultNode>> task) {
-        if (JavaOctetEditor.getInstance().getJar() == null) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> runSearch(task));
+            return;
+        }
+        JavaOctetEditor editor = JavaOctetEditor.getInstance();
+        if (editor.getJar() == null) {
             status.setText(LangUtil.i18n("workspace.open"));
             return;
         }
-        if (search != null && !search.isDone()) return;
-        var archive = JavaOctetEditor.getInstance().getJar();
+        if (search != null && !search.isDone()) {
+            status.setText(LangUtil.i18n("search.running"));
+            return;
+        }
+        var archive = editor.getJar();
         var model = (DefaultListModel<ResultNode>) resultList.getModel();
         model.clear();
+        status.setToolTipText(null);
         status.setText(LangUtil.i18n("search.running"));
-        CompletableFuture<List<ResultNode>> submitted = JavaOctetEditor.getInstance().TASKS.submit(task);
+        CompletableFuture<List<ResultNode>> submitted = editor.TASKS.submit(task);
         search = submitted;
         submitted.whenComplete((results, failure) -> {
-            if (search != submitted) return;
-            if (failure != null) {
-                status.setText(LangUtil.i18n(failure instanceof java.util.concurrent.CancellationException ? "search.cancelled" : "search.failed"));
-                return;
+            if (SwingUtilities.isEventDispatchThread()) {
+                publish(submitted, archive, results, failure);
+            } else {
+                SwingUtilities.invokeLater(() -> publish(submitted, archive, results, failure));
             }
-            if (JavaOctetEditor.getInstance().getJar() != archive) {
-                status.setText(LangUtil.i18n("search.archiveChanged"));
-                return;
-            }
-            for (ResultNode result : results) model.addElement(result);
-            status.setText(LangUtil.i18n("search.results", results.size()));
         });
+    }
+
+    /** Publishes exactly one outcome for the newest search on the EDT. */
+    private void publish(CompletableFuture<List<ResultNode>> submitted, Jar archive,
+                         List<ResultNode> results, Throwable failure) {
+        if (search != submitted) return;
+        search = null;
+        var model = (DefaultListModel<ResultNode>) resultList.getModel();
+        if (failure != null) {
+            boolean cancelled = failure instanceof java.util.concurrent.CancellationException;
+            status.setText(LangUtil.i18n(cancelled ? "search.cancelled" : "search.failed"));
+            // TaskManager reports the technical cause for genuine failures; cancellation stays silent.
+            if (!cancelled) status.setToolTipText(failure.toString());
+            return;
+        }
+        if (!JavaOctetEditor.getInstance().isCurrentArchive(archive)) {
+            status.setText(LangUtil.i18n("search.archiveChanged"));
+            return;
+        }
+        if (results != null) for (ResultNode result : results) model.addElement(result);
+        status.setText(LangUtil.i18n("search.results", results == null ? 0 : results.size()));
     }
 
     @Override
     public void dispose() {
-        if (search != null) search.cancel(true);
+        CompletableFuture<?> running = search;
+        search = null;
+        if (running != null) running.cancel(true);
         super.dispose();
     }
 }

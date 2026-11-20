@@ -22,8 +22,8 @@ Install a full JDK 21 and use the checked-in Gradle wrapper (Gradle 8.10.2). On 
 ./gradlew build
 ./gradlew test
 ./gradlew run
-java -jar build/libs/JavaOctetEditor-1.4.9.jar
-java -jar build/libs/JavaOctetEditor-1.4.9.jar application.jar
+java -jar build/libs/JavaOctetEditor-1.5.0.jar
+java -jar build/libs/JavaOctetEditor-1.5.0.jar application.jar
 ```
 
 `build` runs the regression tests and creates the runnable shaded JAR. The `-plain.jar` is a development artifact without bundled dependencies. Match the version in these commands to `gradle.properties`. `run` keeps desktop settings in `run/`; packaged launches keep settings in the launch working directory. There is no separate lint task.
@@ -49,12 +49,12 @@ Visit `http://127.0.0.1:4173`. The page includes a clearly labelled sample archi
 The CLI runs without a desktop or display server. It writes one JSON value to stdout, sends diagnostics to stderr, and returns status `0` for success, `1` for tool/runtime errors, or `2` for invalid command usage.
 
 ```sh
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --help
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli tools
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli list_classes --archive application.jar
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli find_entries --archive application.jar '{"query":"calculator","kind":"all"}'
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli inspect_class --archive application.jar '{"name":"example.Calculator"}'
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli decompile_class --archive application.jar '{"name":"example.Calculator","backend":"CFR"}'
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --help
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli tools
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli list_classes --archive application.jar
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli find_entries --archive application.jar '{"query":"calculator","kind":"all"}'
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli inspect_class --archive application.jar '{"name":"example.Calculator"}'
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli decompile_class --archive application.jar '{"name":"example.Calculator","backend":"CFR"}'
 ```
 
 Use `@arguments.json` to avoid shell quoting, or `-` to read arguments from stdin. Omitted arguments default to `{}`. `--archive` opens a private workspace and supplies its handle and initial revision automatically.
@@ -70,7 +70,7 @@ For example, save this complete source replacement as `patch.json`:
 ```
 
 ```sh
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli compile_sources @patch.json --archive application.jar --output edited.jar
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli compile_sources @patch.json --archive application.jar --output edited.jar
 ```
 
 Compilation resolves dependencies from the input archive and commits all generated classes together. Failed compilation leaves the archive and output untouched. Changes remain in memory unless `--output` or `export_archive` is used. Existing output files require `--overwrite`. Successful CLI calls return `{"result": ...}` and include `"export"` when an output was requested; errors return `{"error":{"code":...,"message":...}}`.
@@ -82,7 +82,7 @@ Archive source compilation uses JDK platform APIs and explicit archive dependenc
 Start the server with:
 
 ```sh
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --mcp
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --mcp
 ```
 
 The server supports [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/discover) discovery and per-request metadata, plus the legacy `initialize` handshake for `2025-11-25` and `2025-06-18`. stdout contains only newline-delimited UTF-8 JSON-RPC messages. Independent archive handles can execute concurrently; each handle serializes revision checks and mutations. The default executor allows four workers and 128 queued calls; overload receives a protocol error rather than unbounded queuing.
@@ -96,7 +96,7 @@ Example client configuration (replace the JAR path with the absolute path to you
   "mcpServers": {
     "java-octet-editor": {
       "command": "java",
-      "args": ["-jar", "/absolute/path/JavaOctetEditor-1.4.9.jar", "--mcp"]
+      "args": ["-jar", "/absolute/path/JavaOctetEditor-1.5.0.jar", "--mcp"]
     }
   }
 }
@@ -132,11 +132,15 @@ The recent files menu keeps the 20 latest successfully opened paths, newest firs
 
 Class views initialize when selected and reuse their editors when switching views or tabs. Source and visitor drafts, caret positions, and selections remain available while other views are active. A selectable class header exposes the full archive path. Class tabs with the same simple name include their packages; closing the collision restores compact titles.
 
+Middle-click a tab or use its context menu to close it through the normal draft check. Reopen closed tabs restores the most recent entry in the same archive when it still exists. Reload from disk re-reads the current source through the normal draft and unexported-change confirmation, so external updates do not bypass the safety checks. Tree context menus can expand or collapse a whole branch.
+
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+O | Open an archive or class |
 | Ctrl+P | Quick open a class or resource |
 | Ctrl+L | Focus the tree filter |
+| F5 | Reload the current archive from disk |
+| Ctrl+Shift+T | Reopen the most recently closed tab |
 | Ctrl+F | Find in the current editor |
 | F3 / Shift+F3 | Find the next / previous match, wrapping at the document boundary |
 | Enter / Shift+Enter in the find bar | Find the next / previous match |
@@ -149,11 +153,13 @@ Class views initialize when selected and reuse their editors when switching view
 
 Bytecode view is read-only. Decompile view edits Java source; Visitor edit compiles ASM visitor code; Info edit updates class metadata. Source compilation resolves the archive's real dependencies, preserves the original Java target, and commits generated classes together. Failed or cancelled compilation keeps the previous bytecode and your draft.
 
+Info edit and member dialogs validate names, access flags, classfile versions, and field/method descriptors before changing the model. Class metadata remains a draft until you apply it, survives view switching, participates in close/archive-change prompts, and refuses to overwrite a class that changed in another editor. Instruction and annotation edits are marked as archive changes immediately, so the status bar and close protection reflect them.
+
 Source and visitor compilation failures appear below the editor. Errors come first; warnings start collapsed, and technical details can be expanded. Click a diagnostic or select it and press Enter to jump to its source location. Editing the buffer marks those locations stale until the next compilation, so earlier results cannot move the caret into unrelated newer text.
 
 The source header offers a decompiler choice, cancellation and retry without closing the class tab. Backend selection applies to that source view and uses its captured configuration. Apply an outstanding source draft before retrying or changing the backend. Find supports literal or regular-expression queries, case matching, match counts, circular navigation, and explicit feedback for missing matches or invalid expressions.
 
-Text resources have an Apply action. Applying changes updates the in-memory archive; export writes them to disk. Tab markers identify unapplied drafts, while the window title and status distinguish those drafts from applied changes that have not been exported. Closing tabs offers Apply / Discard / Cancel. Opening another archive or closing the window also offers export when the current archive has changes. Edits made while loading or exporting remain protected.
+Text resources have an Apply action. Applying changes updates the in-memory archive; export writes them to disk. Tab draft indicators use a fixed-width dot, so editing and applying do not shift tab layouts. The window title and status distinguish drafts from applied changes that have not been exported. Closing tabs offers Apply / Discard / Cancel. Opening another archive or closing the window also offers export when the current archive has changes. Edits made while loading or exporting remain protected.
 
 Use File > Export archive to write a JAR/ZIP, or Export all sources for decompiled source output. The archive exporter suggests a separate edited filename and confirms replacement of existing files. If drafts are still open, choose whether to apply them first or export the applied archive content while retaining the drafts.
 
@@ -165,7 +171,7 @@ Base `.class` entries are edited through the class editors. Multi-release entrie
 
 ### Search
 
-Search fields, methods, constants, and opcodes from the Search menu. Open a result through its context menu.
+Search fields, methods, constants, and opcodes from the Search menu. Search criteria accept Enter, results open with double-click or Enter, and opening a result clears a hiding tree filter. Results remain tied to the archive that produced them: after an archive replacement, a stale result is rejected instead of opening a same-named class from the new archive.
 
 ### Remapping
 - Drag the mapping file directly into the window
@@ -173,7 +179,7 @@ Search fields, methods, constants, and opcodes from the Search menu. Open a resu
 
 ## Data Integrity and QA
 
-Archive loading accepts JAR/ZIP files, directories, and single class files. Entry paths use forward slashes. Invalid class files, colliding names, malformed ZIP entries, and corrupt input fail explicitly instead of publishing a partially loaded archive. Multi-release `META-INF/versions/**` class entries round-trip as resources; class editing and source compilation operate on base classes.
+Archive loading accepts JAR/ZIP files, directories, and single class files. Entry paths use forward slashes. Invalid class files, colliding names, malformed ZIP entries, and corrupt input fail explicitly instead of publishing a partially loaded archive. Directory inputs reject symbolic links rather than reading outside the selected tree. Per-entry and total read budgets scale with the JVM heap and reject oversized input with an actionable error instead of exhausting memory. Multi-release `META-INF/versions/**` class entries round-trip as resources; class editing and source compilation operate on base classes.
 
 Exports use a temporary sibling file. Replacing an existing output requires atomic filesystem replacement; unsupported filesystems fail with the original preserved. CLI/MCP additionally require explicit overwrite permission. Modified signed archives need to be signed again before signature verification can succeed.
 
@@ -183,7 +189,9 @@ Desktop task constructors capture inputs and options on the model's owning threa
 
 Settings are saved atomically. Invalid settings keep valid/default values, while damaged configuration files receive recovery copies named `*.json.recovery-*.bak` before replacement. A failed recovery prevents overwriting that configuration.
 
-Tests cover archive round trips and failed-write preservation, snapshot isolation and conflicting commits, real dependency/target compatibility, decompiler round trips, task publication/cancellation and load intent, settings recovery, events, and concurrent CLI/MCP workflows. Run `./gradlew test` or select a class with `--tests`, for example:
+Unexpected exceptions raised on the Swing event thread are logged and shown in a bounded error panel with copyable technical details instead of leaving the UI in a partially updated state. Load and export failures keep the current archive and drafts unchanged and include the affected path.
+
+Tests cover archive round trips, read budgets and symbolic-link rejection, failed-write preservation, snapshot isolation and conflicting commits, metadata validation and draft staging, reopen-history bounds, search-result archive identity, real dependency/target compatibility, decompiler round trips, task publication/cancellation and load intent, settings recovery, events, and concurrent CLI/MCP workflows. Run `./gradlew test` or select a class with `--tests`, for example:
 
 ```sh
 ./gradlew test --tests 'cn.enaium.joe.tool.ArchiveToolsTest'
@@ -197,4 +205,4 @@ Run the desktop journeys in a graphical session:
 
 This explicit task builds the runnable JAR and exercises real Swing load, source compilation, newer-draft preservation, keyboard navigation, guarded tab/window close, resource import/replace/delete, single-file export, and archive export/cancellation. Each run uses a fresh directory under `build/desktop-smoke/` for fixtures, application settings, exported files, and screenshots. The smoke source is in `src/smoke/java/`; it runs separately from the headless `test` and default `build` tasks.
 
-The smoke checks dispatch Swing shortcut bindings to the editor and render screenshots from its own window components. This keeps test input and evidence independent of other foreground applications. Journeys cover source/visitor diagnostic navigation and stale-location guards, find feedback and shortcuts, decompiler cancellation/retry/backend selection, class path headers and colliding tab titles, recent-file ordering and cleanup, and source/visitor draft and selection preservation.
+The smoke checks dispatch Swing shortcut bindings to the editor and render screenshots from its own window components. This keeps test input and evidence independent of other foreground applications. Journeys cover source/visitor diagnostic navigation and stale-location guards, find feedback and shortcuts, decompiler cancellation/retry/backend selection, class metadata draft application, class path headers and colliding tab titles, middle-click close and reopen, reload from disk, recent-file ordering and cleanup, and source/visitor draft and selection preservation.

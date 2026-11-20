@@ -384,6 +384,41 @@ class ArchiveIOTest {
         assertOnlyOutputRemains(output);
     }
 
+    @Test
+    void readBudgetRejectsOversizedEntriesBeforeAllocatingThem() throws Exception {
+        Path input = zip("oversized.jar", Map.of("large.bin", new byte[4096]));
+        IOException error = assertThrows(IOException.class,
+                () -> ArchiveIO.read(input, progress -> {}, 1024, 8192));
+        assertTrue(error.getMessage().contains("large.bin"), error.getMessage());
+        assertTrue(error.getMessage().contains("per-entry"), error.getMessage());
+    }
+
+    @Test
+    void readBudgetAppliesAcrossEntriesInOneArchive() throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("a.bin", new byte[700]);
+        entries.put("b.bin", new byte[700]);
+        Path input = zip("total.jar", entries);
+        IOException error = assertThrows(IOException.class,
+                () -> ArchiveIO.read(input, progress -> {}, 1024, 1000));
+        assertTrue(error.getMessage().contains("b.bin"), error.getMessage());
+        assertTrue(error.getMessage().contains("remaining"), error.getMessage());
+    }
+
+    @Test
+    void directoryReadRejectsSymbolicLinksInsteadOfEscapingItsRoot() throws Exception {
+        Path input = Files.createDirectories(directory.resolve("linked"));
+        Path outside = directory.resolve("outside.txt");
+        Files.writeString(outside, "outside");
+        try {
+            Files.createSymbolicLink(input.resolve("link.txt"), outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException unavailable) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are unavailable: " + unavailable);
+        }
+        IOException error = assertThrows(IOException.class, () -> ArchiveIO.read(input));
+        assertTrue(error.getMessage().contains("Symbolic links"), error.getMessage());
+    }
+
     private Path zip(String fileName, Map<String, byte[]> entries) throws IOException {
         Path path = directory.resolve(fileName);
         try (ZipOutputStream stream = new ZipOutputStream(Files.newOutputStream(path))) {

@@ -117,8 +117,23 @@ public class FileTree extends JTree {
             JMenuItem expand = new JMenuItem(LangUtil.i18n("popup.fileTree.expandAll"));
             expand.addActionListener(e -> JTreeUtil.setNodeExpandedState(this, treeNode, true));
             popup.add(expand);
+            JMenuItem collapse = new JMenuItem(LangUtil.i18n("popup.fileTree.collapseAll"));
+            collapse.addActionListener(e -> collapseNode(treeNode));
+            popup.add(collapse);
         }
         if (popup.getComponentCount() > 0) popup.show(this, event.getX(), event.getY());
+    }
+
+    private void collapseNode(DefaultMutableTreeNode node) {
+        TreePath selection = getSelectionPath();
+        boolean expandsSelected = getExpandsSelectedPaths();
+        setExpandsSelectedPaths(false);
+        try {
+            JTreeUtil.setNodeExpandedState(this, node, false);
+            if (selection != null) setSelectionPath(selection);
+        } finally {
+            setExpandsSelectedPaths(expandsSelected);
+        }
     }
 
     public void addTab() {

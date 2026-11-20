@@ -50,15 +50,37 @@ public class BottomPanel extends JPanel {
     }
 
     public BottomPanel() {
-        super(new BorderLayout(12, 0));
+        super(new GridBagLayout());
         setBorder(new EmptyBorder(5, 8, 5, 8));
-        add(archiveStatus, BorderLayout.WEST);
         progress.setStringPainted(true);
-        add(progress, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         actions.add(tasksButton);
         actions.add(cancelButton);
-        add(actions, BorderLayout.EAST);
+
+        // Fixed-weight columns: changing status, progress text or task count cannot move its neighbors.
+        int rowHeight = Math.max(progress.getPreferredSize().height,
+                archiveStatus.getFontMetrics(archiveStatus.getFont()).getHeight());
+        archiveStatus.setPreferredSize(new Dimension(0, rowHeight));
+        archiveStatus.setMinimumSize(new Dimension(0, rowHeight));
+        archiveStatus.setVerticalAlignment(SwingConstants.CENTER);
+        progress.setPreferredSize(new Dimension(0, progress.getPreferredSize().height));
+        progress.setMinimumSize(new Dimension(0, progress.getPreferredSize().height));
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.gridx = 0;
+        constraints.weightx = 0.38;
+        constraints.insets = new Insets(0, 0, 0, 12);
+        add(archiveStatus, constraints);
+        constraints.gridx = 1;
+        constraints.weightx = 0.62;
+        constraints.insets = new Insets(0, 0, 0, 12);
+        add(progress, constraints);
+        constraints.gridx = 2;
+        constraints.weightx = 0;
+        constraints.insets = new Insets(0, 0, 0, 0);
+        add(actions, constraints);
         tasksButton.addActionListener(event -> {
             Point location = tasksButton.getLocationOnScreen();
             taskListPopup.place(location.x - taskListPopup.getPreferredSize().width + tasksButton.getWidth(),
@@ -66,6 +88,8 @@ public class BottomPanel extends JPanel {
         });
         cancelButton.addActionListener(event -> JavaOctetEditor.getInstance().TASKS.cancelAll());
         refreshStatus();
+        Dimension taskSize = tasksButton.getPreferredSize();
+        tasksButton.setPreferredSize(new Dimension(taskSize.width + 18, taskSize.height));
     }
 
     public void refreshStatus() {
@@ -73,12 +97,14 @@ public class BottomPanel extends JPanel {
         var archive = app.getJar();
         String state = app.hasArchiveChanges() ? LangUtil.i18n("document.modified") : LangUtil.i18n("document.clean");
         if (app.hasUnappliedDrafts()) state += ", " + LangUtil.i18n("document.drafts");
-        archiveStatus.setText(archive == null ? LangUtil.i18n("workspace.noArchive")
-                : LangUtil.i18n("workspace.archiveStatus", archive.getClassSize(), archive.getResourceSize()) + " — " + state);
-        archiveStatus.setToolTipText(app.getArchiveSource() == null ? null : app.getArchiveSource().getAbsolutePath());
+        String status = archive == null ? LangUtil.i18n("workspace.noArchive")
+                : LangUtil.i18n("workspace.archiveStatus", archive.getClassSize(), archive.getResourceSize()) + " — " + state;
+        archiveStatus.setText(status);
+        String path = app.getArchiveSource() == null ? null : app.getArchiveSource().getAbsolutePath();
+        archiveStatus.setToolTipText(path == null ? status : status + " — " + path);
         List<Pair<AbstractTask<?>, CompletableFuture<?>>> tasks = app.TASKS.getTask();
         cancelButton.setEnabled(tasks.stream().anyMatch(entry -> !entry.getValue().isDone()));
-        tasksButton.setText(LangUtil.i18n("tasks.show") + " (" + tasks.size() + ")");
+        tasksButton.setText(LangUtil.i18n("tasks.show") + " (" + (tasks.size() > 99 ? "99+" : tasks.size()) + ")");
         if (tasks.isEmpty()) {
             progress.setIndeterminate(false);
             progress.setValue(0);

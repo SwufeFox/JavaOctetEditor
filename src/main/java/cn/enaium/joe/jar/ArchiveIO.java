@@ -9,6 +9,7 @@ import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -44,25 +45,35 @@ public final class ArchiveIO {
      * names and misplaced base class entries are rejected.
      */
     public static Jar read(Path input, IntConsumer progress) throws IOException {
+        long heap = Runtime.getRuntime().maxMemory();
+        long maxEntry = Math.min(1L << 30, Math.max(64L << 20, heap / 8));
+        long maxTotal = Math.min(4L << 30, Math.max(256L << 20, heap / 2));
+        return read(input, progress, maxEntry, maxTotal);
+    }
+
+    /** Bounded read for callers and tests; limits are bytes, not entry counts. */
+    static Jar read(Path input, IntConsumer progress, long maxEntry, long maxTotal) throws IOException {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(progress, "progress");
         checkInterrupted();
         progress.accept(0);
+        ReadBudget budget = new ReadBudget(maxEntry, maxTotal);
         Path source = input.toAbsolutePath().normalize();
         BasicFileAttributes attributes = Files.readAttributes(source, BasicFileAttributes.class);
         Jar archive = new Jar();
         byte[] buffer = new byte[BUFFER_SIZE];
         if (attributes.isDirectory()) {
-            readDirectory(source, archive, progress, buffer);
+            readDirectory(source, archive, progress, buffer, budget);
         } else if (attributes.isRegularFile()) {
             if (source.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".class")) {
+                budget.declared(attributes.size(), source.toString());
                 try (InputStream stream = Files.newInputStream(source)) {
-                    ClassNode node = parseClass(readBytes(stream, buffer), source.toString());
+                    ClassNode node = parseClass(readBytes(stream, buffer, budget, source.toString()), source.toString());
                     classEntryName(node);
                     archive.putClassNode(node);
                 }
             } else {
-                readZip(source, archive, progress, buffer);
+                readZip(source, archive, progress, buffer, budget);
             }
         } else {
             throw new IOException("Input is not a regular file or directory: " + source);
@@ -73,22 +84,28 @@ public final class ArchiveIO {
         return archive;
     }
 
-    private static void readDirectory(Path root, Jar archive, IntConsumer progress, byte[] buffer) throws IOException {
+    private static void readDirectory(Path root, Jar archive, IntConsumer progress, byte[] buffer,
+                                      ReadBudget budget) throws IOException {
         EntryNames names = new EntryNames();
         try (Stream<Path> walk = Files.walk(root)) {
             var paths = walk.filter(path -> !path.equals(root)).sorted().toList();
             int completed = 0;
             for (Path path : paths) {
                 checkInterrupted();
-                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
+                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
+                        LinkOption.NOFOLLOW_LINKS);
+                if (attributes.isSymbolicLink()) {
+                    throw new IOException("Symbolic links are not supported in archive directories: " + path);
+                }
                 String name = root.relativize(path).toString().replace('\\', '/');
                 if (attributes.isDirectory()) {
                     name = names.add(name + "/");
                     archive.putResource(name, new byte[0]);
                 } else if (attributes.isRegularFile()) {
                     name = names.add(name);
+                    budget.declared(attributes.size(), name);
                     try (InputStream stream = Files.newInputStream(path)) {
-                        addEntry(archive, name, readBytes(stream, buffer));
+                        addEntry(archive, name, readBytes(stream, buffer, budget, name));
                     }
                 } else {
                     throw new IOException("Unsupported directory entry: " + path);
@@ -100,7 +117,8 @@ public final class ArchiveIO {
         }
     }
 
-    private static void readZip(Path source, Jar archive, IntConsumer progress, byte[] buffer) throws IOException {
+    private static void readZip(Path source, Jar archive, IntConsumer progress, byte[] buffer,
+                                ReadBudget budget) throws IOException {
         EntryNames names = new EntryNames();
         try (ZipFile zip = new ZipFile(source.toFile())) {
             var entries = zip.entries();
@@ -109,9 +127,10 @@ public final class ArchiveIO {
                 checkInterrupted();
                 ZipEntry entry = entries.nextElement();
                 String name = names.add(entry.getName());
+                budget.declared(entry.getSize(), name);
                 byte[] bytes;
                 try (InputStream stream = zip.getInputStream(entry)) {
-                    bytes = readBytes(stream, buffer);
+                    bytes = readBytes(stream, buffer, budget, name);
                 }
                 CRC32 crc = new CRC32();
                 crc.update(bytes);
@@ -302,12 +321,14 @@ public final class ArchiveIO {
         return normalizeEntryName(internalName + ".class");
     }
 
-    private static byte[] readBytes(InputStream stream, byte[] buffer) throws IOException {
+    private static byte[] readBytes(InputStream stream, byte[] buffer, ReadBudget budget,
+                                    String name) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         while (true) {
             checkInterrupted();
             int count = stream.read(buffer);
             if (count < 0) return bytes.toByteArray();
+            budget.charge(count, name);
             bytes.write(buffer, 0, count);
         }
     }
@@ -336,6 +357,38 @@ public final class ArchiveIO {
             }
         }
         return normalized;
+    }
+
+    /** Refuses entries that would exhaust the configured heap instead of failing with OOM. */
+    static final class ReadBudget {
+        private final long maxEntry;
+        private long remaining;
+
+        ReadBudget(long maxEntry, long maxTotal) {
+            if (maxEntry <= 0 || maxTotal <= 0) {
+                throw new IllegalArgumentException("Archive read limits must be positive");
+            }
+            this.maxEntry = maxEntry;
+            this.remaining = maxTotal;
+        }
+
+        void declared(long size, String name) throws IOException {
+            if (size < 0) return;
+            if (size > maxEntry) throw tooLarge(name, "per-entry", maxEntry);
+            if (size > remaining) throw tooLarge(name, "remaining", remaining);
+        }
+
+        void charge(int count, String name) throws IOException {
+            if (count > maxEntry) throw tooLarge(name, "per-entry", maxEntry);
+            if (count > remaining) throw tooLarge(name, "remaining", remaining);
+            remaining -= count;
+        }
+
+        private static IOException tooLarge(String name, String limit, long bytes) {
+            return new IOException("Archive entry exceeds the " + limit + " safe read limit ("
+                    + Math.max(1, bytes >> 20) + " MiB): " + name
+                    + ". Use a smaller source or launch with more heap.");
+        }
     }
 
     private static final class EntryNames {

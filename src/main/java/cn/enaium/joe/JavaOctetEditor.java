@@ -63,7 +63,7 @@ public class JavaOctetEditor {
 
     public static final String TITLE = "JavaOctetEditor";
 
-    public static final String VERSION = "1.4.9";
+    public static final String VERSION = "1.5.0";
 
     public JFrame window;
 
@@ -168,6 +168,20 @@ public class JavaOctetEditor {
             if (authorization == null || !isArchiveLoadCurrent(request)) return;
             TASKS.submit(new InputJarTask(file, request, () -> authorization.isValid()));
         }));
+    }
+
+    /** Reloads the current archive through the normal guarded open flow. EDT only. */
+    public void reloadArchive() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::reloadArchive);
+            return;
+        }
+        if (closed) return;
+        if (archiveSource == null) {
+            MessageUtil.warning(LangUtil.i18n("document.reloadUnavailable"));
+            return;
+        }
+        requestOpenArchive(archiveSource);
     }
 
     private CompletableFuture<Authorization> authorizeReplacement(BooleanSupplier current) {

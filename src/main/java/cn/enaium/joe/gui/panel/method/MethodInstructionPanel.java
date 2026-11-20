@@ -87,6 +87,7 @@ public class MethodInstructionPanel extends JPanel {
 
                 instructionDefaultListModel.add(instructionJList.getSelectedIndex() + 1, new InstructionWrapper(clone));
                 methodNode.instructions.insert(selectedValue.getWrapper(), clone);
+                JavaOctetEditor.getInstance().refreshJar();
             }
         }, keymapConfig.clone.getValue());
 
@@ -96,6 +97,7 @@ public class MethodInstructionPanel extends JPanel {
                 MessageUtil.confirm(LangUtil.i18n("dialog.wantRemove"), LangUtil.i18n("button.remove"), () -> {
                     instructionDefaultListModel.removeElement(selectedValue);
                     methodNode.instructions.remove(selectedValue.getWrapper());
+                    JavaOctetEditor.getInstance().refreshJar();
                 });
             }
         }, keymapConfig.remove.getValue());
@@ -157,6 +159,7 @@ public class MethodInstructionPanel extends JPanel {
         model.add(target, selected);
         instructionJList.setSelectedIndex(target);
         instructionJList.ensureIndexIsVisible(target);
+        JavaOctetEditor.getInstance().refreshJar();
     }
 
     private static void insert(MethodNode methodNode, JList<InstructionWrapper> instructionJList, boolean before) {
@@ -166,7 +169,7 @@ public class MethodInstructionPanel extends JPanel {
         DefaultListModel<InstructionWrapper> instructionDefaultListModel = ((DefaultListModel<InstructionWrapper>) instructionJList.getModel());
         InstructionWrapper anchor = instructionJList.getSelectedValue();
         InstructionComboBox instructionComboBox = new InstructionComboBox();
-        MessageUtil.confirm(instructionComboBox, "select insert instruction", () -> {
+        MessageUtil.confirm(instructionComboBox, LangUtil.i18n("instruction.selectType"), () -> {
             AbstractInsnNode abstractInsnNode;
             int selectedIndex = instructionComboBox.getSelectedIndex();
             switch (selectedIndex) {
@@ -232,6 +235,7 @@ public class MethodInstructionPanel extends JPanel {
                     methodNode.instructions.insert(anchor.getWrapper(), abstractInsnNode);
                 }
                 instructionDefaultListModel.add(anchorIndex + (before ? 0 : 1), new InstructionWrapper(abstractInsnNode));
+                JavaOctetEditor.getInstance().refreshJar();
             });
         });
     }

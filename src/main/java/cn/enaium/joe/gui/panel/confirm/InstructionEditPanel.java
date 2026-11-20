@@ -88,6 +88,8 @@ public class InstructionEditPanel extends ConfirmPanel {
                 try {
                     if (!finalAbstractInstructionPanel.getConfirm().call()) {
                         MessageUtil.info(LangUtil.i18n("fail"));
+                    } else {
+                        cn.enaium.joe.JavaOctetEditor.getInstance().refreshJar();
                     }
                 } catch (Exception ex) {
                     MessageUtil.error(ex);

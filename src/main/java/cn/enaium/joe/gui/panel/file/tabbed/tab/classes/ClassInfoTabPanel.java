@@ -16,28 +16,62 @@
 
 package cn.enaium.joe.gui.panel.file.tabbed.tab.classes;
 
-
+import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.dialog.AnnotationListDialog;
-import cn.enaium.joe.util.event.events.EditSaveSuccessEvent;
+import cn.enaium.joe.gui.editor.DraftSupport;
+import cn.enaium.joe.gui.editor.EditorDraft;
+import cn.enaium.joe.jar.Jar;
 import cn.enaium.joe.util.LangUtil;
-import cn.enaium.joe.util.StringUtil;
+import cn.enaium.joe.util.MessageUtil;
 import cn.enaium.joe.util.classes.ClassNode;
+import cn.enaium.joe.util.event.events.EditSaveSuccessEvent;
 import net.miginfocom.swing.MigLayout;
 import org.benf.cfr.reader.util.StringUtils;
+import org.objectweb.asm.tree.AnnotationNode;
 
 import javax.swing.*;
-import java.util.ArrayList;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.Arrays;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * @author Enaium
  * @since 0.6.0
  */
-public class ClassInfoTabPanel extends ClassNodeTabPanel {
+public class ClassInfoTabPanel extends ClassNodeTabPanel implements EditorDraft {
     protected JTextField name, sourceFile, debugFile, access, version, signature, superName, interfaces, outerClass, outerMethod, outerMethodDescription;
+
+    private final Jar owner;
+    private final Map<JTextField, String> baseline = new IdentityHashMap<>();
+    private final DocumentListener editListener = new DocumentListener() {
+        public void insertUpdate(DocumentEvent event) {
+            edited();
+        }
+
+        public void removeUpdate(DocumentEvent event) {
+            edited();
+        }
+
+        public void changedUpdate(DocumentEvent event) {
+            edited();
+        }
+    };
+    private JTextField[] editors;
+    private byte[] expected;
+    private long revision;
+    private boolean replacing;
 
     public ClassInfoTabPanel(ClassNode classNode) {
         super(classNode);
+        JavaOctetEditor app = JavaOctetEditor.getInstance();
+        owner = app == null ? null : app.getJar();
         setLayout(new MigLayout("fillx", "[fill][fill]"));
         add(new JLabel(LangUtil.i18n("class.info.name")));
         JTextField name = this.name = new JTextField(classNode.getInternalName());
@@ -72,79 +106,166 @@ public class ClassInfoTabPanel extends ClassNodeTabPanel {
         add(new JLabel(LangUtil.i18n("class.info.outerMethodDescription")));
         JTextField outerMethodDesc = this.outerMethodDescription = new JTextField(classNode.getNodeInternal().outerMethodDesc);
         add(outerMethodDesc, "wrap");
-        add(new JLabel("Visible Annotation:"));
-        add(new JButton(LangUtil.i18n("button.edit")) {{
-            addActionListener(e -> {
-                if (classNode.getClassNode().visibleAnnotations != null) {
-                    new AnnotationListDialog(classNode.getClassNode().visibleAnnotations).setVisible(true);
-                }
-            });
-        }}, "wrap");
-        add(new JLabel("Invisible Annotation:"));
-        add(new JButton(LangUtil.i18n("button.edit")) {{
-            addActionListener(e -> {
-                if (classNode.getClassNode().invisibleAnnotations != null) {
-                    new AnnotationListDialog(classNode.getClassNode().invisibleAnnotations).setVisible(true);
-                }
-            });
-        }}, "wrap");
-        add(new JButton(LangUtil.i18n("button.save")) {{
-            addActionListener(e -> {
+        add(new JLabel(LangUtil.i18n("class.annotation.visible")));
+        add(annotationButton(true), "wrap");
+        add(new JLabel(LangUtil.i18n("class.annotation.invisible")));
+        add(annotationButton(false), "wrap");
+        JButton save = new JButton(LangUtil.i18n("button.save"));
+        save.addActionListener(event -> saveDraft());
+        add(save, "span 2");
 
-                try {
-                    ClassNode staged = classNode.copy();
-                    var node = staged.getClassNode();
-                    String oldName = classNode.getInternalName();
-                    if (!StringUtil.isBlank(name.getText())) node.name = name.getText().trim();
-                    var app = cn.enaium.joe.JavaOctetEditor.getInstance();
-                    var archive = app.getJar();
-                    if (archive == null || archive.getClassNode(oldName) != classNode) return;
-                    if (!node.name.equals(oldName) && archive.hasClass(node.name)) {
-                        throw new IllegalArgumentException(LangUtil.i18n("class.info.nameInUse", node.name));
-                    }
-                    node.sourceFile = nullable(sourceFile.getText());
-                    node.sourceDebug = nullable(sourceDebug.getText());
-                    if (!StringUtil.isBlank(access.getText())) node.access = Integer.parseInt(access.getText().trim());
-                    if (!StringUtil.isBlank(version.getText())) node.version = Integer.parseInt(version.getText().trim());
-                    node.signature = nullable(signature.getText());
-                    node.superName = nullable(superName.getText());
-                    node.interfaces = new ArrayList<>();
-                    if (!StringUtil.isBlank(interfaces.getText())) {
-                        for (String value : interfaces.getText().split(";")) {
-                            if (!value.isBlank()) node.interfaces.add(value.trim());
-                        }
-                    }
-                    node.outerClass = nullable(outerClass.getText());
-                    node.outerMethod = nullable(outerMethod.getText());
-                    node.outerMethodDesc = nullable(outerMethodDesc.getText());
-                    staged.updateBytes();
-                    classNode.accept(staged);
-                    app.refreshJar();
-                    EditSaveSuccessEvent.trigger(oldName);
-                    cn.enaium.joe.util.MessageUtil.info(LangUtil.i18n("source.saved"));
-                } catch (RuntimeException failure) {
-                    cn.enaium.joe.util.MessageUtil.error(failure);
-                }
-            });
-        }}, "span 2");
+        editors = new JTextField[]{name, sourceFile, debugFile, access, version, signature, superName,
+                interfaces, outerClass, outerMethod, outerMethodDescription};
+        expected = classNode.getClassBytes().clone();
+        captureBaseline();
+        for (JTextField editor : editors) editor.getDocument().addDocumentListener(editListener);
     }
 
-    private static String nullable(String value) {
-        return StringUtil.isBlank(value) ? null : value;
+    private JButton annotationButton(boolean visible) {
+        JButton button = new JButton(LangUtil.i18n("button.edit"));
+        button.addActionListener(event -> {
+            List<AnnotationNode> annotations = visible
+                    ? getClassNode().getClassNode().visibleAnnotations
+                    : getClassNode().getClassNode().invisibleAnnotations;
+            if (annotations == null) return;
+            AnnotationListDialog dialog = new AnnotationListDialog(annotations);
+            dialog.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosed(WindowEvent event) {
+                    annotationEdited();
+                }
+            });
+            dialog.setVisible(true);
+        });
+        return button;
     }
 
-    public void update(){
-        this.name.setText(this.getClassNode().getInternalName());
+    /** Annotation dialogs mutate the live tree; keep the conflict baseline and archive state in step. */
+    private void annotationEdited() {
+        JavaOctetEditor app = JavaOctetEditor.getInstance();
+        if (app == null || !isLive(app)) return;
+        try {
+            expected = getClassNode().getClassBytes().clone();
+        } catch (RuntimeException failure) {
+            MessageUtil.error(failure);
+            return;
+        }
+        app.refreshJar();
+    }
+
+    private void edited() {
+        revision++;
+        JavaOctetEditor app = JavaOctetEditor.getInstance();
+        if (!replacing && app != null) app.draftsChanged();
+    }
+
+    private void refreshFromNode() {
         var node = getClassNode().getNodeInternal();
-        this.superName.setText(node.superName);
-        this.debugFile.setText(node.sourceDebug);
-        this.sourceFile.setText(node.sourceFile);
-        this.signature.setText(node.signature);
-        this.outerClass.setText(node.outerClass);
-        this.outerMethod.setText(node.outerMethod);
-        this.outerMethodDescription.setText(node.outerMethodDesc);
-        this.access.setText(String.valueOf(node.access));
-        this.interfaces.setText(StringUtils.join(node.interfaces, ";"));
-        this.version.setText(String.valueOf(node.version));
+        replacing = true;
+        try {
+            setText(name, getClassNode().getInternalName());
+            setText(sourceFile, node.sourceFile);
+            setText(debugFile, node.sourceDebug);
+            setText(access, String.valueOf(node.access));
+            setText(version, String.valueOf(node.version));
+            setText(signature, node.signature);
+            setText(superName, node.superName);
+            setText(interfaces, StringUtils.join(node.interfaces, ";"));
+            setText(outerClass, node.outerClass);
+            setText(outerMethod, node.outerMethod);
+            setText(outerMethodDescription, node.outerMethodDesc);
+        } finally {
+            replacing = false;
+        }
+        expected = getClassNode().getClassBytes().clone();
+        captureBaseline();
+    }
+
+    private static void setText(JTextField field, String value) {
+        String text = value == null ? "" : value;
+        if (!field.getText().equals(text)) field.setText(text);
+    }
+
+    private void captureBaseline() {
+        for (JTextField editor : editors) baseline.put(editor, editor.getText());
+    }
+
+    private ClassInfoDraft.Values currentValues() {
+        return new ClassInfoDraft.Values(name.getText(), sourceFile.getText(), debugFile.getText(),
+                access.getText(), version.getText(), signature.getText(), superName.getText(),
+                interfaces.getText(), outerClass.getText(), outerMethod.getText(),
+                outerMethodDescription.getText());
+    }
+
+    private ClassInfoDraft.Values baselineValues() {
+        return new ClassInfoDraft.Values(baseline.get(name), baseline.get(sourceFile), baseline.get(debugFile),
+                baseline.get(access), baseline.get(version), baseline.get(signature), baseline.get(superName),
+                baseline.get(interfaces), baseline.get(outerClass), baseline.get(outerMethod),
+                baseline.get(outerMethodDescription));
+    }
+
+    private boolean isLive(JavaOctetEditor app) {
+        return owner != null && app.isCurrentArchive(owner)
+                && owner.getClassNode(getClassNode().getInternalName()) == getClassNode();
+    }
+
+    @Override
+    public boolean hasDraft() {
+        for (JTextField editor : editors) {
+            if (!Objects.equals(baseline.get(editor), editor.getText())) return true;
+        }
+        return false;
+    }
+
+    @Override
+    public long draftRevision() {
+        return revision;
+    }
+
+    @Override
+    public String draftName() {
+        return getClassNode().getInternalName() + ".class / " + LangUtil.i18n("class.tab.infoEdit");
+    }
+
+    @Override
+    public CompletableFuture<Boolean> saveDraft() {
+        return DraftSupport.onEdt(() -> {
+            if (!hasDraft()) return CompletableFuture.completedFuture(true);
+            JavaOctetEditor app = JavaOctetEditor.getInstance();
+            try {
+                if (app == null || !isLive(app)) {
+                    MessageUtil.error(LangUtil.i18n("draft.classRemoved"));
+                    return CompletableFuture.completedFuture(false);
+                }
+                if (expected == null || !Arrays.equals(expected, getClassNode().getClassBytes())) {
+                    MessageUtil.error(LangUtil.i18n("class.info.changed"));
+                    return CompletableFuture.completedFuture(false);
+                }
+                ClassNode staged = ClassInfoDraft.stage(getClassNode(), currentValues(), baselineValues());
+                String oldName = getClassNode().getInternalName();
+                if (!oldName.equals(staged.getInternalName()) && owner.hasClass(staged.getInternalName())) {
+                    MessageUtil.error(LangUtil.i18n("class.info.nameInUse", staged.getInternalName()));
+                    return CompletableFuture.completedFuture(false);
+                }
+                getClassNode().accept(staged);
+                refreshFromNode();
+                app.draftsChanged();
+                app.refreshJar();
+                EditSaveSuccessEvent.trigger(oldName);
+                app.notifyStatus(LangUtil.i18n("draft.applied"));
+                return CompletableFuture.completedFuture(true);
+            } catch (ClassInfoDraft.InvalidValueException invalid) {
+                MessageUtil.error(LangUtil.i18n(invalid.key()));
+                return CompletableFuture.completedFuture(false);
+            } catch (RuntimeException failure) {
+                MessageUtil.error(failure);
+                return CompletableFuture.completedFuture(false);
+            }
+        });
+    }
+
+    public void update() {
+        if (hasDraft()) return;
+        refreshFromNode();
     }
 }

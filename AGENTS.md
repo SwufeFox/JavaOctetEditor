@@ -37,9 +37,9 @@ Run from the repository root. These examples use the POSIX wrapper; use `gradlew
 ./gradlew test --tests 'cn.enaium.joe.compiler.CompilerTest'
 ./gradlew desktopSmoke
 ./gradlew run
-java -jar build/libs/JavaOctetEditor-1.4.9.jar
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --cli tools
-java -jar build/libs/JavaOctetEditor-1.4.9.jar --mcp
+java -jar build/libs/JavaOctetEditor-1.5.0.jar
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --cli tools
+java -jar build/libs/JavaOctetEditor-1.5.0.jar --mcp
 ```
 
 `build` runs tests and produces the runnable shaded JAR; `-plain.jar` lacks bundled dependencies. Match the filename to `gradle.properties` after version changes. `run` uses `run/` as the desktop working directory. No dedicated lint/format task is configured. See `README.md` for CLI argument files, export options, and MCP client setup.

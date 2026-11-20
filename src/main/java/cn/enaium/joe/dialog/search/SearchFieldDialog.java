@@ -18,7 +18,6 @@ package cn.enaium.joe.dialog.search;
 
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.dialog.SearchDialog;
-import cn.enaium.joe.gui.panel.search.ResultNode;
 import cn.enaium.joe.util.task.tasks.SearchFieldTask;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.MessageUtil;
@@ -30,6 +29,8 @@ import org.objectweb.asm.tree.FieldNode;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 
 /**
  * @author Enaium
@@ -43,28 +44,35 @@ public class SearchFieldDialog extends SearchDialog {
 
     public SearchFieldDialog() {
         setTitle(LangUtil.i18n("search.field.title"));
-        add(new JPanel(new FlowLayout()) {{
-            add(new JLabel(LangUtil.i18n("search.owner")));
-            JTextField owner = SearchFieldDialog.this.owner =  new JTextField();
-            add(owner);
-            add(new JLabel(LangUtil.i18n("search.name")));
-            JTextField name = SearchFieldDialog.this.name = new JTextField();
-            add(name);
-            add(new JLabel(LangUtil.i18n("search.description")));
-            JTextField description = SearchFieldDialog.this.desc =  new JTextField();
-            add(description);
-            add(SearchFieldDialog.this.jButton = new JButton(LangUtil.i18n("button.search")) {{
-                addActionListener(e -> {
-
-                    if (StringUtil.isBlank(owner.getText()) && StringUtil.isBlank(name.getText()) && StringUtil.isBlank(description.getText())) {
-                        MessageUtil.warning("Please input");
-                        return;
-                    }
-
-                    runSearch(new SearchFieldTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText()));
-                });
-            }});
-        }}, BorderLayout.SOUTH);
+        JPanel criteria = new JPanel(new FlowLayout());
+        criteria.add(new JLabel(LangUtil.i18n("search.owner")));
+        JTextField owner = this.owner = new JTextField();
+        criteria.add(owner);
+        criteria.add(new JLabel(LangUtil.i18n("search.name")));
+        JTextField name = this.name = new JTextField();
+        criteria.add(name);
+        criteria.add(new JLabel(LangUtil.i18n("search.description")));
+        JTextField description = this.desc = new JTextField();
+        criteria.add(description);
+        JButton searchButton = this.jButton = new JButton(LangUtil.i18n("button.search"));
+        searchButton.addActionListener(e -> {
+            if (StringUtil.isBlank(owner.getText()) && StringUtil.isBlank(name.getText())
+                    && StringUtil.isBlank(description.getText())) {
+                MessageUtil.warning(LangUtil.i18n("search.pleaseInput"));
+                return;
+            }
+            runSearch(new SearchFieldTask(JavaOctetEditor.getInstance().getJar(),
+                    owner.getText(), name.getText(), description.getText()));
+        });
+        criteria.add(searchButton);
+        add(criteria, BorderLayout.SOUTH);
+        getRootPane().setDefaultButton(searchButton);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                owner.requestFocusInWindow();
+            }
+        });
     }
 
     public SearchFieldDialog(FieldInsnNode fieldInsnNode){

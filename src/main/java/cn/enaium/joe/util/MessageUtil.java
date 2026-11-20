@@ -23,6 +23,7 @@ import org.tinylog.Logger;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
@@ -39,21 +40,46 @@ public class MessageUtil {
 
     public static void error(String readable, Throwable e) {
         Logger.error(readable, e);
-        onEdt(() -> JOptionPane.showMessageDialog(null, readable + "\n" + e, LangUtil.i18n("error"), JOptionPane.ERROR_MESSAGE));
+        onEdt(() -> new OptionDialog(LangUtil.i18n("error"), failurePanel(readable, e),
+                JOptionPane.ERROR_MESSAGE).setVisible(true));
     }
 
     public static void error(Throwable e) {
         Logger.error(e);
-        onEdt(() -> new OptionDialog(LangUtil.i18n("error"), new BorderPanel() {{
-            setTop(new JLabel(e.getMessage() == null ? e.toString() : e.getMessage()));
-            setCenter(new JScrollPane(new JTextArea() {{
-                StringWriter out = new StringWriter();
-                e.printStackTrace(new PrintWriter(out));
-                setText(out.toString());
-                setEditable(false);
-                setCaretPosition(0);
-            }}));
-        }}, JOptionPane.ERROR_MESSAGE).setVisible(true));
+        String summary = e.getMessage() == null ? e.toString() : e.getMessage();
+        onEdt(() -> new OptionDialog(LangUtil.i18n("error"), failurePanel(summary, e),
+                JOptionPane.ERROR_MESSAGE).setVisible(true));
+    }
+
+    /** Bounded, copyable failure details instead of an unbounded flat dialog. */
+    private static JComponent failurePanel(String summary, Throwable failure) {
+        JTextArea message = new JTextArea(summary);
+        message.setEditable(false);
+        message.setOpaque(false);
+        message.setLineWrap(true);
+        message.setWrapStyleWord(true);
+        message.setBorder(null);
+        message.setFont(UIManager.getFont("Label.font"));
+        message.setColumns(60);
+        message.setRows(Math.max(1, Math.min(3, summary.length() / 60 + 1)));
+        StringWriter out = new StringWriter();
+        failure.printStackTrace(new PrintWriter(out));
+        JTextArea details = new JTextArea(out.toString());
+        details.setEditable(false);
+        details.setLineWrap(false);
+        details.setCaretPosition(0);
+        JScrollPane scroll = new JScrollPane(details);
+        scroll.setPreferredSize(new Dimension(640, 260));
+        JButton copy = new JButton(LangUtil.i18n("error.copyDetails"));
+        copy.addActionListener(event -> Toolkit.getDefaultToolkit().getSystemClipboard()
+                .setContents(new StringSelection(out.toString()), null));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        actions.add(copy);
+        BorderPanel panel = new BorderPanel();
+        panel.setTop(message);
+        panel.setCenter(scroll);
+        panel.setBottom(actions);
+        return panel;
     }
 
     public static RuntimeException runtimeException(String readable, Throwable e) {

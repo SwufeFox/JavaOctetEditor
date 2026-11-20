@@ -25,6 +25,8 @@ import cn.enaium.joe.gui.panel.menu.file.SaveMenuItem;
 import cn.enaium.joe.util.LangUtil;
 
 import javax.swing.*;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 
 /**
  * @author Enaium
@@ -34,6 +36,16 @@ public class FileMenu extends JMenu {
         super(LangUtil.i18n("menu.file"));
         add(new LoadMenuItem());
         add(new LoadRecentMenu());
+        add(new JMenuItem(LangUtil.i18n("document.reload")) {{
+            setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0));
+            addActionListener(event -> JavaOctetEditor.getInstance().reloadArchive());
+        }});
+        add(new JSeparator());
+        add(new JMenuItem(LangUtil.i18n("tab.reopen")) {{
+            setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_T,
+                    InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+            addActionListener(event -> JavaOctetEditor.getInstance().fileTabbedPanel.reopenClosedTab());
+        }});
         add(new SaveMenuItem());
         add(new JMenuItem(LangUtil.i18n("document.applySelected")) {{
             addActionListener(event -> JavaOctetEditor.getInstance().fileTabbedPanel.saveSelectedDrafts());

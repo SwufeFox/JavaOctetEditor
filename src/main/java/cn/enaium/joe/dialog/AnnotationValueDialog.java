@@ -16,6 +16,7 @@
 
 package cn.enaium.joe.dialog;
 
+import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.gui.panel.confirm.ListValueEditPanel;
 import cn.enaium.joe.gui.panel.confirm.ValueEditPanel;
 import cn.enaium.joe.util.JMenuUtil;
@@ -65,7 +66,8 @@ public class AnnotationValueDialog extends Dialog {
                         if (ListUtil.getType(wrapper) == AnnotationNode.class) {
                             new AnnotationListDialog(wrapper.stream().map(it -> ((AnnotationNode) it)).collect(Collectors.toList())).setVisible(true);
                         } else {
-                            MessageUtil.confirm(new ListValueEditPanel(wrapper), "List");
+                            MessageUtil.confirm(new ListValueEditPanel(wrapper), "List",
+                                    JavaOctetEditor.getInstance()::markArchiveModified);
                         }
                     } else {
                         int index = (jTable.getSelectedRow() + 1) * 2 - 1;
@@ -75,6 +77,7 @@ public class AnnotationValueDialog extends Dialog {
                                 String[] strings = newList.stream().map(Object::toString).toArray(String[]::new);
                                 valueAt.setWrapper(strings);
                                 objects.set(index, strings);
+                                JavaOctetEditor.getInstance().markArchiveModified();
                             });
                         } else {
                             ObjectWrapper objectWrapper = new ObjectWrapper(valueAt.getWrapper());
@@ -82,6 +85,7 @@ public class AnnotationValueDialog extends Dialog {
                             MessageUtil.confirm(confirmPanel, LangUtil.i18n("button.edit"), () -> {
                                 valueAt.setWrapper(objectWrapper.getWrapper());
                                 objects.set(index, objectWrapper.getWrapper());
+                                JavaOctetEditor.getInstance().markArchiveModified();
                             });
                         }
                     }

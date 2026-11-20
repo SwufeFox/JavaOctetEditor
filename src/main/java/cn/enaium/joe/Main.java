@@ -87,6 +87,17 @@ public final class Main {
             System.setOut(new TinyLogPrintStream(System.out, STDOUT));
             System.setErr(new TinyLogPrintStream(System.err, STDERR));
         }
+        Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
+            if (SwingUtilities.isEventDispatchThread()) {
+                MessageUtil.error(failure);
+            } else if (previous != null) {
+                previous.uncaughtException(thread, failure);
+            } else {
+                Logger.error(failure);
+                failure.printStackTrace();
+            }
+        });
         Logger.info("DIR:{}", System.getProperty("user.dir"));
         SwingUtilities.invokeLater(() -> {
             JavaOctetEditor editor = new JavaOctetEditor();

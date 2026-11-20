@@ -18,14 +18,17 @@ package cn.enaium.joe.dialog.search;
 
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.dialog.SearchDialog;
-import cn.enaium.joe.gui.panel.search.ResultNode;
 import cn.enaium.joe.util.task.tasks.SearchLdcTask;
 import cn.enaium.joe.util.LangUtil;
+import cn.enaium.joe.util.MessageUtil;
+import cn.enaium.joe.util.StringUtil;
 import org.objectweb.asm.tree.LdcInsnNode;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 
 /**
  * @author Enaium
@@ -35,17 +38,30 @@ public class SearchLdcDialog extends SearchDialog {
     protected JButton jButton;
     public SearchLdcDialog() {
         setTitle(LangUtil.i18n("search.ldc.title"));
-        add(new JPanel(new FlowLayout()) {{
-            JTextField text = jTextField =  new JTextField(15);
-            add(text);
-            add(jButton = new JButton(LangUtil.i18n("button.search")) {{
-                addActionListener(e -> {
-                    if (!text.getText().isEmpty()) {
-                        runSearch(new SearchLdcTask(JavaOctetEditor.getInstance().getJar(), text.getText()));
-                    }
-                });
-            }});
-        }}, BorderLayout.SOUTH);
+        JPanel criteria = new JPanel(new FlowLayout());
+        JTextField text = this.jTextField = new JTextField(15);
+        criteria.add(text);
+        JButton searchButton = this.jButton = new JButton(LangUtil.i18n("button.search"));
+        searchButton.addActionListener(e -> search());
+        criteria.add(searchButton);
+        add(criteria, BorderLayout.SOUTH);
+        text.addActionListener(e -> search());
+        getRootPane().setDefaultButton(searchButton);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                text.requestFocusInWindow();
+            }
+        });
+    }
+
+    private void search() {
+        String text = jTextField.getText();
+        if (StringUtil.isBlank(text)) {
+            MessageUtil.warning(LangUtil.i18n("search.pleaseInput"));
+            return;
+        }
+        runSearch(new SearchLdcTask(JavaOctetEditor.getInstance().getJar(), text));
     }
 
     public SearchLdcDialog(LdcInsnNode ldcInsnNode) {

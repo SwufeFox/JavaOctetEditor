@@ -184,12 +184,19 @@ public final class DesktopSmoke {
             check(edt(() -> editor.fileTabbedPanel.getTabCount()) == opened, "quick open selects the matching class");
             check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).contains("demo")
                     && editor.fileTabbedPanel.getTitleAt(1).contains("other")), "same-name class tabs display their packages");
-            fireCloseTab();
-            await(() -> editor.fileTabbedPanel.getTabCount() == 1, "close colliding clean class tab");
-            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).equals("Sample *")), "closing collision restores compact dirty title");
+            int closingIndex = edt(() -> editor.fileTabbedPanel.getSelectedIndex());
+            edt(() -> { middleClickTab(closingIndex); return null; });
+            await(() -> editor.fileTabbedPanel.getTabCount() == 1, "middle-click closes colliding clean class tab");
+            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).equals("Sample")), "closing collision restores compact title");
+            check(edt(() -> cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator.isMarked(
+                    editor.fileTabbedPanel, 0)), "dirty class keeps a fixed-width draft indicator");
+            edt(() -> { editor.fileTabbedPanel.reopenClosedTab(); return null; });
+            await(() -> editor.fileTabbedPanel.getTabCount() == 2
+                    && editor.fileTabbedPanel.getTitleAt(1).contains("other"), "reopen closed class tab");
             edt(() -> { editor.fileTree.openEntry("other/Sample.class"); return null; });
-            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).contains("demo")
-                    && editor.fileTabbedPanel.getTitleAt(0).endsWith(" *")), "reopening collision preserves the original draft marker");
+            check(edt(() -> editor.fileTabbedPanel.getTitleAt(0).contains("demo")), "reopening collision preserves the original draft title");
+            check(edt(() -> cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator.isMarked(
+                    editor.fileTabbedPanel, 0)), "reopening collision preserves the draft indicator");
             screenshot("same-name-tabs.png");
 
             JTextField treeFilter = edt(() -> find(editor.window.getContentPane(), JTextField.class,
@@ -202,7 +209,31 @@ public final class DesktopSmoke {
             check(edt(() -> source.isShowing() && sourcePanel.hasDraft() && source.getText().equals(sourceDraft)),
                     "source draft survives outer tab navigation and filtering");
             edt(() -> { source.setText(validSource); return null; });
-            resourceOperations(compiledBytes);
+
+            edt(() -> { classViews.setSelectedIndex(3); return null; });
+            cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ClassInfoTabPanel infoPanel =
+                    edt(() -> find(classTab, cn.enaium.joe.gui.panel.file.tabbed.tab.classes.ClassInfoTabPanel.class, item -> true));
+            JTextField sourceFileName = edt(() -> find(infoPanel, JTextField.class, item -> "Sample.java".equals(item.getText())));
+            check(sourceFileName != null, "class metadata exposes the source file");
+            edt(() -> {
+                sourceFileName.setText("Smoke.java");
+                classViews.setSelectedIndex(1);
+                classViews.setSelectedIndex(3);
+                return null;
+            });
+            check(edt(() -> infoPanel.hasDraft() && sourceFileName.getText().equals("Smoke.java")),
+                    "class metadata draft survives view switching");
+            check(edt(() -> infoPanel.saveDraft()).get(20, TimeUnit.SECONDS), "class metadata draft applies");
+            check(edt(() -> "Smoke.java".equals(editor.getJar().getClassNode("demo/Sample").getNodeInternal().sourceFile)),
+                    "applied class metadata is visible in the model");
+            check(edt(() -> editor.hasArchiveChanges()), "class metadata marks the archive modified");
+            await(() -> !cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator.isMarked(
+                    editor.fileTabbedPanel, 0), "metadata save clears the draft indicator");
+            screenshot("class-info-draft.png");
+            edt(() -> { classViews.setSelectedIndex(1); return null; });
+            await(() -> !sourcePanel.hasDraft() && source.isEditable(), "source baseline after metadata refresh");
+            byte[] currentClassBytes = edt(() -> editor.getJar().getClassNode("demo/Sample").getClassBytes().clone());
+            resourceOperations(currentClassBytes);
 
             Path cancelled = evidence.resolve("cancelled.jar");
             CompletableFuture<Boolean> cancelledExport = exportThroughChooser(cancelled, false);
@@ -217,6 +248,29 @@ public final class DesktopSmoke {
                 check(Arrays.equals("answer=9\n".getBytes(StandardCharsets.UTF_8), zip.getInputStream(zip.getEntry("config/app.properties")).readAllBytes()), "exported resource contains applied text");
             }
 
+            Jar reloaded = ArchiveIO.read(input);
+            reloaded.putResource("config/reloaded.txt", "reloaded\n".getBytes(StandardCharsets.UTF_8));
+            ArchiveIO.write(reloaded, input);
+            edt(() -> { editor.reloadArchive(); return null; });
+            await(() -> editor.getJar() != null
+                    && editor.getJar().getResource("config/reloaded.txt") != null, "reload archive from disk");
+            check(edt(() -> editor.getArchiveSource().equals(input.toFile())), "reload retains the source path");
+            check(!edt(() -> editor.hasArchiveChanges()), "reload establishes a clean baseline");
+            screenshot("reloaded-archive.png");
+
+            Path broken = evidence.resolve("broken.jar");
+            Files.writeString(broken, "not an archive");
+            edt(() -> { editor.requestOpenArchive(broken.toFile()); return null; });
+            JDialog failure = awaitValue(DesktopSmoke::errorDialog, "archive load failure dialog");
+            check(edt(failure::getWidth) <= 1000 && edt(failure::getHeight) <= 800,
+                    "load failure details stay bounded");
+            check(edt(() -> find(failure, JTextArea.class, item -> item.getText().contains("broken.jar"))) != null,
+                    "load failure identifies the affected file");
+            screenshotWindow(failure, "load-error.png");
+            edt(() -> { failure.dispose(); return null; });
+            check(edt(() -> editor.getJar() != null
+                    && editor.getJar().getResource("config/reloaded.txt") != null), "failed load preserves the current archive");
+
             edt(() -> { editor.fileTree.openEntry("config/app.properties"); return null; });
             RSyntaxTextArea newResource = edt(() -> find(editor.fileTabbedPanel.getSelectedComponent(), RSyntaxTextArea.class, item -> true));
             edt(() -> { newResource.setText("answer=10\n"); return null; });
@@ -227,7 +281,7 @@ public final class DesktopSmoke {
             chooseOption(2);
             check(edt(() -> editor.window.isDisplayable() && newResource.getText().equals("answer=10\n")), "attached-style close cancel keeps window and draft");
             screenshot("protected-editor.png");
-            System.out.println("DESKTOP_SMOKE_OK: source/visitor diagnostic navigation and stale guards, editor search feedback and shortcuts, decompiler cancel/retry/backend switch, class path headers and collision titles, ordered recent files and missing-entry cleanup, captured compilation, newer drafts, Java 8 target, navigation/filtering, guarded close, resource actions and export.");
+            System.out.println("DESKTOP_SMOKE_OK: class metadata drafts and validation publication, load-failure error details, middle-click close/reopen, reload from disk, source/visitor diagnostic navigation and stale guards, editor search feedback and shortcuts, decompiler cancel/retry/backend switch, class path headers and collision titles, ordered recent files and missing-entry cleanup, captured compilation, newer drafts, Java 8 target, navigation/filtering, guarded close, resource actions and export.");
         } finally {
             edt(() -> {
                 if (editor != null) editor.shutdown();
@@ -355,6 +409,36 @@ public final class DesktopSmoke {
         pressKey(query, KeyEvent.VK_ESCAPE, false);
         check(!edt(toolbar::isVisible), "Escape closes search from its input");
         edt(() -> { text.setText(baseline); return null; });
+    }
+
+    private static JDialog errorDialog() {
+        for (Window window : Window.getWindows()) if (window instanceof JDialog dialog && dialog.isShowing()
+                && LangUtil.i18n("error").equals(dialog.getTitle())) return dialog;
+        return null;
+    }
+
+    private static void screenshotWindow(Window window, String filename) throws Exception {
+        edt(() -> {
+            BufferedImage image = new BufferedImage(window.getWidth(), window.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = image.createGraphics();
+            try {
+                window.printAll(graphics);
+            } finally {
+                graphics.dispose();
+            }
+            ImageIO.write(image, "png", evidence.resolve(filename).toFile());
+            return null;
+        });
+    }
+
+    private static void middleClickTab(int index) {
+        Rectangle bounds = editor.fileTabbedPanel.getBoundsAt(index);
+        if (bounds == null) throw new AssertionError("Tab bounds missing");
+        MouseEvent event = new MouseEvent(editor.fileTabbedPanel, MouseEvent.MOUSE_PRESSED,
+                System.currentTimeMillis(), InputEvent.BUTTON2_DOWN_MASK,
+                bounds.x + Math.max(1, bounds.width / 2), bounds.y + Math.max(1, bounds.height / 2),
+                1, false, MouseEvent.BUTTON2);
+        editor.fileTabbedPanel.dispatchEvent(event);
     }
 
     private static CompletableFuture<Boolean> exportThroughChooser(Path destination, boolean approve) throws Exception {
@@ -562,6 +646,7 @@ public final class DesktopSmoke {
     private static byte[] classBytes(String name, int result) {
         ClassWriter writer = new ClassWriter(0);
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
+        writer.visitSource("Sample.java", null);
         var method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "value", "()I", null, null);
         method.visitCode(); method.visitIntInsn(Opcodes.BIPUSH, result); method.visitInsn(Opcodes.IRETURN); method.visitMaxs(1, 0); method.visitEnd();
         writer.visitEnd();

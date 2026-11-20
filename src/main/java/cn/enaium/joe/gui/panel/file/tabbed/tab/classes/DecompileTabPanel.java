@@ -78,6 +78,7 @@ public class DecompileTabPanel extends ClassNodeTabPanel implements EditorDraft 
         save.addActionListener(event -> saveDraft());
         backendChoice.setSelectedItem(JavaOctetEditor.getInstance().CONFIG
                 .getByClass(ApplicationConfig.class).decompilerMode.getValue());
+        backendChoice.setPrototypeDisplayValue(DecompileService.Service.VineFlower);
         backendChoice.getAccessibleContext().setAccessibleName(LangUtil.i18n("source.backend"));
         backendChoice.addActionListener(event -> update());
         retry.addActionListener(event -> update());
@@ -89,9 +90,13 @@ public class DecompileTabPanel extends ClassNodeTabPanel implements EditorDraft 
         });
         JLabel backendLabel = new JLabel(LangUtil.i18n("source.backend"));
         backendLabel.setLabelFor(backendChoice);
-        JPanel selection = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        JToolBar selection = new JToolBar();
+        selection.setFloatable(false);
+        selection.setBorder(null);
         selection.add(backendLabel);
+        selection.add(Box.createHorizontalStrut(6));
         selection.add(backendChoice);
+        selection.add(Box.createHorizontalStrut(6));
         selection.add(cancelDecompilation);
         selection.add(retry);
         selection.add(details);
@@ -133,10 +138,9 @@ public class DecompileTabPanel extends ClassNodeTabPanel implements EditorDraft 
         save.setEnabled(initialized && live && dirty && !busy);
         retry.setEnabled(live && !dirty && !busy && !loading);
         backendChoice.setEnabled(live && !dirty && !busy);
-        cancelDecompilation.setVisible(loading);
         cancelDecompilation.setEnabled(loading && decompilation != null && !decompilation.isDone());
         backendChoice.setToolTipText(dirty ? LangUtil.i18n("source.applyBeforeBackend") : null);
-        details.setVisible(lastFailure != null);
+        details.setEnabled(lastFailure != null);
     }
 
     private void reportCompilationFailure(Throwable failure, int request, long revision) {

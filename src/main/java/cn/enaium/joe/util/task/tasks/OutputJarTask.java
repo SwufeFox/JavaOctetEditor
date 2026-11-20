@@ -19,6 +19,7 @@ package cn.enaium.joe.util.task.tasks;
 import cn.enaium.joe.jar.ArchiveIO;
 import cn.enaium.joe.jar.ArchiveSnapshot;
 import cn.enaium.joe.jar.Jar;
+import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.task.AbstractTask;
 
 import java.io.File;
@@ -51,7 +52,7 @@ public class OutputJarTask extends AbstractTask<Boolean> {
             ArchiveIO.write(snapshot, out.toPath(), overwrite, this::setProgress);
             return true;
         } catch (IOException exception) {
-            throw new UncheckedIOException("Could not export archive: " + out, exception);
+            throw new UncheckedIOException(LangUtil.i18n("document.exportFailed", out.getAbsolutePath()), exception);
         }
     }
 }

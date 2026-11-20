@@ -21,6 +21,7 @@ import cn.enaium.joe.util.event.events.EditSaveSuccessEvent;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.classes.ClassNode;
 import cn.enaium.joe.gui.editor.DraftSupport;
+import cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator;
 import cn.enaium.joe.jar.Jar;
 
 import javax.swing.*;
@@ -74,6 +75,9 @@ public class ClassTabPanel extends JPanel {
         jTabbedPane.addTab(LangUtil.i18n("class.tab.decompileView"), new JPanel());
         jTabbedPane.addTab(LangUtil.i18n("class.tab.visitorEdit"), new JPanel());
         jTabbedPane.addTab(LangUtil.i18n("class.tab.infoEdit"), new JPanel());
+        for (int index = 0; index < jTabbedPane.getTabCount(); index++) {
+            cn.enaium.joe.gui.panel.file.tabbed.TabDraftIndicator.apply(jTabbedPane, index, false);
+        }
         jTabbedPane.setSelectedIndex(classTabIndex);
         internalName2panel.entrySet().removeIf(entry -> entry.getValue().get() == null);
         internalName2panel.put(classNode.getInternalName(), new WeakReference<>(this));
@@ -138,8 +142,9 @@ public class ClassTabPanel extends JPanel {
             String title = ClassTabTitle.format(panel.classNode.getInternalName(),
                     simpleNames.get(panel.classNode.getSimpleName()) > 1,
                     LangUtil.i18n("class.tab.defaultPackage"),
-                    removed ? LangUtil.i18n("draft.removed") : null, DraftSupport.hasDrafts(panel));
+                    removed ? LangUtil.i18n("draft.removed") : null);
             if (!title.equals(tabs.getTitleAt(index))) tabs.setTitleAt(index, title);
+            TabDraftIndicator.apply(tabs, index, DraftSupport.hasDrafts(panel));
             String tooltip = panel.getEntryPath();
             if (removed) tooltip += " — " + LangUtil.i18n("draft.classRemoved");
             if (!tooltip.equals(tabs.getToolTipTextAt(index))) tabs.setToolTipTextAt(index, tooltip);

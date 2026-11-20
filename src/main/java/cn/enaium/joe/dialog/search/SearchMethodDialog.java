@@ -18,7 +18,6 @@ package cn.enaium.joe.dialog.search;
 
 import cn.enaium.joe.JavaOctetEditor;
 import cn.enaium.joe.dialog.SearchDialog;
-import cn.enaium.joe.gui.panel.search.ResultNode;
 import cn.enaium.joe.util.task.tasks.SearchMethodTask;
 import cn.enaium.joe.util.LangUtil;
 import cn.enaium.joe.util.MessageUtil;
@@ -29,6 +28,8 @@ import org.objectweb.asm.tree.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 
 /**
  * @author Enaium
@@ -42,32 +43,37 @@ public class SearchMethodDialog extends SearchDialog {
     protected JCheckBox itf;
     public SearchMethodDialog() {
         setTitle(LangUtil.i18n("search.method.title"));
-        add(new JPanel(new FlowLayout()) {{
-            add(new JLabel(LangUtil.i18n("search.owner")));
-            JTextField owner = SearchMethodDialog.this.owner = new JTextField();
-            add(owner);
-            add(new JLabel(LangUtil.i18n("search.name")));
-            JTextField name = SearchMethodDialog.this.name = new JTextField();
-            add(name);
-            add(new JLabel(LangUtil.i18n("search.description")));
-            JTextField description = SearchMethodDialog.this.desc = new JTextField();
-            add(description);
-            JCheckBox anInterface = SearchMethodDialog.this.itf =  new JCheckBox(LangUtil.i18n("search.interface"));
-            add(anInterface);
-            add(SearchMethodDialog.this.jButton = new JButton(LangUtil.i18n("button.search")) {{
-                addActionListener(e -> {
-
-
-                    if (StringUtil.isBlank(owner.getText()) && StringUtil.isBlank(name.getText()) && StringUtil.isBlank(description.getText()) && !anInterface.isSelected()) {
-                        MessageUtil.warning("Please input");
-                        return;
-                    }
-
-
-                    runSearch(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(), owner.getText(), name.getText(), description.getText(), anInterface.isSelected()));
-                });
-            }});
-        }}, BorderLayout.SOUTH);
+        JPanel criteria = new JPanel(new FlowLayout());
+        criteria.add(new JLabel(LangUtil.i18n("search.owner")));
+        JTextField owner = this.owner = new JTextField();
+        criteria.add(owner);
+        criteria.add(new JLabel(LangUtil.i18n("search.name")));
+        JTextField name = this.name = new JTextField();
+        criteria.add(name);
+        criteria.add(new JLabel(LangUtil.i18n("search.description")));
+        JTextField description = this.desc = new JTextField();
+        criteria.add(description);
+        JCheckBox anInterface = this.itf = new JCheckBox(LangUtil.i18n("search.interface"));
+        criteria.add(anInterface);
+        JButton searchButton = this.jButton = new JButton(LangUtil.i18n("button.search"));
+        searchButton.addActionListener(e -> {
+            if (StringUtil.isBlank(owner.getText()) && StringUtil.isBlank(name.getText())
+                    && StringUtil.isBlank(description.getText()) && !anInterface.isSelected()) {
+                MessageUtil.warning(LangUtil.i18n("search.pleaseInput"));
+                return;
+            }
+            runSearch(new SearchMethodTask(JavaOctetEditor.getInstance().getJar(),
+                    owner.getText(), name.getText(), description.getText(), anInterface.isSelected()));
+        });
+        criteria.add(searchButton);
+        add(criteria, BorderLayout.SOUTH);
+        getRootPane().setDefaultButton(searchButton);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                owner.requestFocusInWindow();
+            }
+        });
     }
 
     public SearchMethodDialog(MethodInsnNode methodInsnNode){
